@@ -84,6 +84,43 @@
 └───────────────┘    └──────────────┘    └─────────┘    └──────┘
 ```
 
+### 2.3 月末精算・貯金計算の処理フロー（月末レポートに含む）
+
+```
+┌───────────────┐    ┌──────────────┐    ┌─────────┐    ┌──────┐
+│Cloud Scheduler│───▶│ Scheduler    │───▶│Firestore│───▶│ LINE │
+│ (月末)        │    │ Handler      │    │ (集計)  │    │通知  │
+└───────────────┘    └──────────────┘    └─────────┘    └──────┘
+```
+
+**月末処理の詳細:**
+
+1. **外食費用 - 貯金額の算出**
+   - 各ユーザーの `diningBalance`（外食残金）を取得
+   - 貯金額 = `diningBalance`（= 5万円 − 当月外食費用）
+   - 各ユーザーの貯金額をレポートに表示
+
+2. **買い物費用 - 精算額の算出**
+   - 当月の買い物費用を各ユーザーごとに集計
+   - 差額 = |ユーザーAの合計 − ユーザーBの合計|
+   - 精算額 = 差額 ÷ 2
+   - 少なく払った方 → 多く払った方に精算額を返金
+
+### 2.4 月次残金リセットの処理フロー
+
+```
+┌───────────────┐    ┌──────────────┐    ┌─────────┐
+│Cloud Scheduler│───▶│ Reset        │───▶│Firestore│
+│ (毎月1日)     │    │ Handler      │    │ (更新)  │
+└───────────────┘    └──────────────┘    └─────────┘
+```
+
+**詳細フロー:**
+
+1. Cloud Scheduler が毎月1日に Reset Handler を呼び出し
+2. 全ユーザーの `diningBalance` を 50000 に更新
+3. `balanceResetAt` を現在時刻に更新
+
 ## 3. データ設計
 
 ### 3.1 Firestore コレクション構造
@@ -95,10 +132,19 @@
   displayName: "田中",           // LINE表示名（自動取得）
   groupId: "GROUP_ID",          // 所属グループID
   isActive: true,               // アクティブ状態
+  diningBalance: 50000,         // 外食費用の残金（デフォルト: 5万円）
+  balanceResetAt: Timestamp,    // 残金リセット日時（毎月1日にリセット）
   createdAt: Timestamp,         // 初回メッセージ送信時に自動作成
   updatedAt: Timestamp
 }
 ```
+
+**残金管理ルール（外食費用のみ対象）:**
+- 各ユーザーは外食費用として月5万円の残金（`diningBalance`）を保有
+- 外食費用の支出時のみ、支払ったユーザーの `diningBalance` から差し引く
+- 買い物費用は `diningBalance` に影響しない
+- 毎月1日に全ユーザーの `diningBalance` を50000にリセット
+- **月末時点の `diningBalance` が各ユーザーの「貯金額」となる**
 
 **自動登録の流れ:**
 1. ユーザーが初めて画像を送信
@@ -113,8 +159,8 @@
   userId: "LINE_USER_ID",
   userName: "田中",
   amount: 1280,
-  category: "食費",
-  storeName: "セブンイレブン",
+  category: "外食費用",        // "外食費用" or "買い物費用"
+  storeName: "サイゼリヤ",
   date: Timestamp,           // レシートの日付
   imageUrl: "gs://...",      // 画像保存先（オプション）
   calendarEventId: "xxx",    // Google Calendar イベントID
@@ -122,16 +168,30 @@
 }
 ```
 
+**カテゴリー別の処理:**
+| カテゴリー | 残金への影響 | 月末処理 |
+|------------|-------------|----------|
+| 外食費用 | `diningBalance` から差し引く | 残金が貯金となる |
+| 買い物費用 | 影響なし | 差額を精算 |
+
 #### settings コレクション
 ```javascript
 {
   id: "global",
-  monthlyBudget: 50000,      // 月額予算
+  monthlyBudget: 50000,      // 月額予算（1人あたり）
   lineGroupId: "GROUP_ID",   // LINE グループID（初回メッセージ時に自動設定）
   calendarId: "xxx@group.calendar.google.com",
+  firstHalfPayerId: "LINE_USER_ID_A",   // 前半担当者（1日〜15日）
+  secondHalfPayerId: "LINE_USER_ID_B",  // 後半担当者（16日〜月末）
   updatedAt: Timestamp
 }
 ```
+
+**半月担当制（外食費用のみ）:**
+- 1日〜15日: `firstHalfPayerId` のユーザーが外食の支払い担当
+- 16日〜月末: `secondHalfPayerId` のユーザーが外食の支払い担当
+- 担当者情報は定期レポートに表示される
+- ※買い物費用には担当制は適用されない
 
 ### 3.2 Google Calendar イベント形式
 
