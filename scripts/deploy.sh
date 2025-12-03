@@ -1,0 +1,233 @@
+#!/bin/bash
+set -e
+
+# =============================================================================
+# 家計簿LINE Bot - デプロイスクリプト
+# =============================================================================
+
+# 設定
+PROJECT_ID="${PROJECT_ID:-kakeibo-line-bot}"
+REGION="${REGION:-asia-northeast1}"
+FUNCTIONS_DIR="./functions"
+
+# 色付き出力
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# 使用方法
+usage() {
+    echo "Usage: $0 [command]"
+    echo ""
+    echo "Commands:"
+    echo "  all         全てデプロイ (functions + scheduler)"
+    echo "  functions   Cloud Functions のみデプロイ"
+    echo "  scheduler   Cloud Scheduler のみ設定"
+    echo "  webhook     Webhook ハンドラーのみデプロイ"
+    echo "  report      スケジューラーハンドラーのみデプロイ"
+    echo ""
+    echo "Environment Variables:"
+    echo "  PROJECT_ID  GCP プロジェクトID (default: kakeibo-line-bot)"
+    echo "  REGION      デプロイリージョン (default: asia-northeast1)"
+    exit 1
+}
+
+# プロジェクト確認
+check_project() {
+    log_info "プロジェクト確認: ${PROJECT_ID}"
+    gcloud config set project "${PROJECT_ID}"
+}
+
+# Webhook ハンドラーのデプロイ
+deploy_webhook() {
+    log_info "Webhook ハンドラーをデプロイ中..."
+
+    gcloud functions deploy webhook \
+        --gen2 \
+        --runtime=nodejs20 \
+        --region="${REGION}" \
+        --source="${FUNCTIONS_DIR}" \
+        --entry-point=webhook \
+        --trigger-http \
+        --allow-unauthenticated \
+        --memory=512MB \
+        --timeout=60s \
+        --max-instances=10 \
+        --min-instances=0 \
+        --set-secrets="LINE_CHANNEL_SECRET=LINE_CHANNEL_SECRET:latest,LINE_CHANNEL_ACCESS_TOKEN=LINE_CHANNEL_ACCESS_TOKEN:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,GOOGLE_CALENDAR_ID=GOOGLE_CALENDAR_ID:latest"
+
+    log_info "Webhook ハンドラーのデプロイ完了"
+
+    # URL を表示
+    WEBHOOK_URL="https://${REGION}-${PROJECT_ID}.cloudfunctions.net/webhook"
+    log_info "Webhook URL: ${WEBHOOK_URL}"
+    echo ""
+    log_warn "LINE Developers Console で Webhook URL を設定してください"
+}
+
+# スケジューラーハンドラーのデプロイ
+deploy_report() {
+    log_info "スケジューラーハンドラーをデプロイ中..."
+
+    gcloud functions deploy scheduledReport \
+        --gen2 \
+        --runtime=nodejs20 \
+        --region="${REGION}" \
+        --source="${FUNCTIONS_DIR}" \
+        --entry-point=scheduledReport \
+        --trigger-http \
+        --no-allow-unauthenticated \
+        --memory=256MB \
+        --timeout=120s \
+        --max-instances=2 \
+        --min-instances=0 \
+        --set-secrets="LINE_CHANNEL_ACCESS_TOKEN=LINE_CHANNEL_ACCESS_TOKEN:latest,GOOGLE_CALENDAR_ID=GOOGLE_CALENDAR_ID:latest"
+
+    log_info "スケジューラーハンドラーのデプロイ完了"
+}
+
+# Cloud Functions デプロイ
+deploy_functions() {
+    log_info "Cloud Functions をデプロイ中..."
+    deploy_webhook
+    deploy_report
+    log_info "全ての Cloud Functions デプロイ完了"
+}
+
+# サービスアカウント作成
+create_scheduler_service_account() {
+    local SA_NAME="scheduler-invoker"
+    local SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+    # サービスアカウントが存在するか確認
+    if gcloud iam service-accounts describe "${SA_EMAIL}" &>/dev/null; then
+        log_info "サービスアカウント ${SA_NAME} は既に存在します"
+    else
+        log_info "サービスアカウント ${SA_NAME} を作成中..."
+        gcloud iam service-accounts create "${SA_NAME}" \
+            --display-name="Cloud Scheduler Invoker"
+    fi
+
+    # Cloud Functions の呼び出し権限を付与
+    log_info "Cloud Functions の呼び出し権限を付与中..."
+    gcloud functions add-iam-policy-binding scheduledReport \
+        --region="${REGION}" \
+        --member="serviceAccount:${SA_EMAIL}" \
+        --role="roles/cloudfunctions.invoker" \
+        --quiet || true
+
+    echo "${SA_EMAIL}"
+}
+
+# Cloud Scheduler 設定
+setup_scheduler() {
+    log_info "Cloud Scheduler を設定中..."
+
+    local SA_EMAIL
+    SA_EMAIL=$(create_scheduler_service_account)
+    local FUNCTION_URL="https://${REGION}-${PROJECT_ID}.cloudfunctions.net/scheduledReport"
+
+    # 15日の集計ジョブ
+    log_info "15日の集計ジョブを設定中..."
+    if gcloud scheduler jobs describe kakeibo-mid-month-report --location="${REGION}" &>/dev/null; then
+        gcloud scheduler jobs update http kakeibo-mid-month-report \
+            --location="${REGION}" \
+            --schedule="0 9 15 * *" \
+            --time-zone="Asia/Tokyo" \
+            --uri="${FUNCTION_URL}" \
+            --http-method=POST \
+            --headers="Content-Type=application/json" \
+            --message-body='{"reportType":"mid-month"}' \
+            --oidc-service-account-email="${SA_EMAIL}"
+    else
+        gcloud scheduler jobs create http kakeibo-mid-month-report \
+            --location="${REGION}" \
+            --schedule="0 9 15 * *" \
+            --time-zone="Asia/Tokyo" \
+            --uri="${FUNCTION_URL}" \
+            --http-method=POST \
+            --headers="Content-Type=application/json" \
+            --message-body='{"reportType":"mid-month"}' \
+            --oidc-service-account-email="${SA_EMAIL}"
+    fi
+
+    # 月末の集計ジョブ（毎月最終日）
+    log_info "月末の集計ジョブを設定中..."
+    # Cloud Scheduler は "L" をサポートしないため、28-31日に実行して月末かチェック
+    if gcloud scheduler jobs describe kakeibo-end-month-report --location="${REGION}" &>/dev/null; then
+        gcloud scheduler jobs update http kakeibo-end-month-report \
+            --location="${REGION}" \
+            --schedule="0 9 28-31 * *" \
+            --time-zone="Asia/Tokyo" \
+            --uri="${FUNCTION_URL}" \
+            --http-method=POST \
+            --headers="Content-Type=application/json" \
+            --message-body='{"reportType":"end-month"}' \
+            --oidc-service-account-email="${SA_EMAIL}"
+    else
+        gcloud scheduler jobs create http kakeibo-end-month-report \
+            --location="${REGION}" \
+            --schedule="0 9 28-31 * *" \
+            --time-zone="Asia/Tokyo" \
+            --uri="${FUNCTION_URL}" \
+            --http-method=POST \
+            --headers="Content-Type=application/json" \
+            --message-body='{"reportType":"end-month"}' \
+            --oidc-service-account-email="${SA_EMAIL}"
+    fi
+
+    log_info "Cloud Scheduler 設定完了"
+    echo ""
+    log_info "設定されたジョブ:"
+    gcloud scheduler jobs list --location="${REGION}" --filter="name:kakeibo"
+}
+
+# メイン処理
+main() {
+    if [ $# -eq 0 ]; then
+        usage
+    fi
+
+    check_project
+
+    case "$1" in
+        all)
+            deploy_functions
+            setup_scheduler
+            ;;
+        functions)
+            deploy_functions
+            ;;
+        scheduler)
+            setup_scheduler
+            ;;
+        webhook)
+            deploy_webhook
+            ;;
+        report)
+            deploy_report
+            ;;
+        *)
+            log_error "不明なコマンド: $1"
+            usage
+            ;;
+    esac
+
+    echo ""
+    log_info "完了しました"
+}
+
+main "$@"
