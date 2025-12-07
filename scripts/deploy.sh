@@ -114,20 +114,19 @@ create_scheduler_service_account() {
 
     # サービスアカウントが存在するか確認
     if gcloud iam service-accounts describe "${SA_EMAIL}" &>/dev/null; then
-        log_info "サービスアカウント ${SA_NAME} は既に存在します"
+        log_info "サービスアカウント ${SA_NAME} は既に存在します" >&2
     else
-        log_info "サービスアカウント ${SA_NAME} を作成中..."
+        log_info "サービスアカウント ${SA_NAME} を作成中..." >&2
         gcloud iam service-accounts create "${SA_NAME}" \
-            --display-name="Cloud Scheduler Invoker"
+            --display-name="Cloud Scheduler Invoker" >&2
     fi
 
-    # Cloud Functions の呼び出し権限を付与
-    log_info "Cloud Functions の呼び出し権限を付与中..."
-    gcloud functions add-iam-policy-binding scheduledReport \
+    # Cloud Functions (2nd gen) の呼び出し権限を付与
+    log_info "Cloud Functions の呼び出し権限を付与中..." >&2
+    gcloud functions add-invoker-policy-binding scheduledReport \
         --region="${REGION}" \
         --member="serviceAccount:${SA_EMAIL}" \
-        --role="roles/cloudfunctions.invoker" \
-        --quiet || true
+        --quiet >&2 || true
 
     echo "${SA_EMAIL}"
 }
@@ -142,52 +141,57 @@ setup_scheduler() {
 
     # 15日の集計ジョブ
     log_info "15日の集計ジョブを設定中..."
+
+    # デバッグ情報を出力
+    log_info "Function URL: ${FUNCTION_URL}"
+    log_info "Service Account: ${SA_EMAIL}"
+    log_info "Region: ${REGION}"
+
+    # 既存ジョブを削除（存在する場合）
     if gcloud scheduler jobs describe kakeibo-mid-month-report --location="${REGION}" &>/dev/null; then
-        gcloud scheduler jobs update http kakeibo-mid-month-report \
+        log_info "既存ジョブを削除中..."
+        gcloud scheduler jobs delete kakeibo-mid-month-report \
             --location="${REGION}" \
-            --schedule="0 9 15 * *" \
-            --time-zone="Asia/Tokyo" \
-            --uri="${FUNCTION_URL}" \
-            --http-method=POST \
-            --headers="Content-Type=application/json" \
-            --message-body='{"reportType":"mid-month"}' \
-            --oidc-service-account-email="${SA_EMAIL}"
-    else
-        gcloud scheduler jobs create http kakeibo-mid-month-report \
-            --location="${REGION}" \
-            --schedule="0 9 15 * *" \
-            --time-zone="Asia/Tokyo" \
-            --uri="${FUNCTION_URL}" \
-            --http-method=POST \
-            --headers="Content-Type=application/json" \
-            --message-body='{"reportType":"mid-month"}' \
-            --oidc-service-account-email="${SA_EMAIL}"
+            --quiet
     fi
+
+    # 新規作成（詳細なエラー情報を取得）
+    log_info "ジョブを作成中..."
+    gcloud scheduler jobs create http kakeibo-mid-month-report \
+        --location="${REGION}" \
+        --schedule="0 9 15 * *" \
+        --time-zone="Asia/Tokyo" \
+        --uri="${FUNCTION_URL}" \
+        --http-method=POST \
+        --headers="Content-Type=application/json" \
+        --message-body='{"reportType":"mid-month"}' \
+        --oidc-service-account-email="${SA_EMAIL}" \
+        --oidc-token-audience="${FUNCTION_URL}" \
+        --verbosity=debug
 
     # 月末の集計ジョブ（毎月最終日）
     log_info "月末の集計ジョブを設定中..."
     # Cloud Scheduler は "L" をサポートしないため、28-31日に実行して月末かチェック
+
+    # 既存ジョブを削除（存在する場合）
     if gcloud scheduler jobs describe kakeibo-end-month-report --location="${REGION}" &>/dev/null; then
-        gcloud scheduler jobs update http kakeibo-end-month-report \
+        log_info "既存ジョブを削除中..."
+        gcloud scheduler jobs delete kakeibo-end-month-report \
             --location="${REGION}" \
-            --schedule="0 9 28-31 * *" \
-            --time-zone="Asia/Tokyo" \
-            --uri="${FUNCTION_URL}" \
-            --http-method=POST \
-            --headers="Content-Type=application/json" \
-            --message-body='{"reportType":"end-month"}' \
-            --oidc-service-account-email="${SA_EMAIL}"
-    else
-        gcloud scheduler jobs create http kakeibo-end-month-report \
-            --location="${REGION}" \
-            --schedule="0 9 28-31 * *" \
-            --time-zone="Asia/Tokyo" \
-            --uri="${FUNCTION_URL}" \
-            --http-method=POST \
-            --headers="Content-Type=application/json" \
-            --message-body='{"reportType":"end-month"}' \
-            --oidc-service-account-email="${SA_EMAIL}"
+            --quiet
     fi
+
+    # 新規作成
+    gcloud scheduler jobs create http kakeibo-end-month-report \
+        --location="${REGION}" \
+        --schedule="0 9 28-31 * *" \
+        --time-zone="Asia/Tokyo" \
+        --uri="${FUNCTION_URL}" \
+        --http-method=POST \
+        --headers="Content-Type=application/json" \
+        --message-body='{"reportType":"end-month"}' \
+        --oidc-service-account-email="${SA_EMAIL}" \
+        --oidc-token-audience="${FUNCTION_URL}"
 
     log_info "Cloud Scheduler 設定完了"
     echo ""

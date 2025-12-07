@@ -58,7 +58,7 @@ init_project() {
         log_info "プロジェクト ${PROJECT_ID} は既に存在します"
     else
         log_info "プロジェクト ${PROJECT_ID} を作成中..."
-        gcloud projects create "${PROJECT_ID}" --name="家計簿LINE Bot"
+        gcloud projects create "${PROJECT_ID}" --name="Kakeibo LINE Bot"
     fi
 
     gcloud config set project "${PROJECT_ID}"
