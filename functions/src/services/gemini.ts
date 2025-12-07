@@ -25,7 +25,7 @@ export async function analyzeReceiptImage(
 ): Promise<GeminiAnalysisResult> {
   try {
     const genAI = initializeGemini(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
     const prompt = `あなたはレシートや支払い画面を解析する専門家です。
 以下の画像から支出情報を抽出し、必ずJSON形式で出力してください。
