@@ -1,19 +1,19 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { GeminiAnalysisResult } from '../types/index.js';
 
 /**
  * Gemini APIクライアント
  */
-let genAI: GoogleGenerativeAI | null = null;
+let genAIClient: GoogleGenAI | null = null;
 
 /**
  * Gemini APIの初期化
  */
-function initializeGemini(apiKey: string): GoogleGenerativeAI {
-  if (!genAI) {
-    genAI = new GoogleGenerativeAI(apiKey);
+function initializeGemini(apiKey: string): GoogleGenAI {
+  if (!genAIClient) {
+    genAIClient = new GoogleGenAI({ apiKey });
   }
-  return genAI;
+  return genAIClient;
 }
 
 /**
@@ -24,8 +24,7 @@ export async function analyzeReceiptImage(
   apiKey: string
 ): Promise<GeminiAnalysisResult> {
   try {
-    const genAI = initializeGemini(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const ai = initializeGemini(apiKey);
 
     const prompt = `あなたはレシートや支払い画面を解析する専門家です。
 以下の画像から支出情報を抽出し、必ずJSON形式で出力してください。
@@ -74,16 +73,25 @@ export async function analyzeReceiptImage(
   "reason": "具体的な理由"
 }`;
 
-    const imagePart = {
-      inlineData: {
-        data: imageBuffer.toString('base64'),
-        mimeType: 'image/jpeg',
-      },
-    };
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: prompt },
+            {
+              inlineData: {
+                data: imageBuffer.toString('base64'),
+                mimeType: 'image/jpeg',
+              },
+            },
+          ],
+        },
+      ],
+    });
 
-    const result = await model.generateContent([prompt, imagePart]);
-    const response = result.response;
-    const text = response.text();
+    const text = response.text ?? '';
 
     // JSONを抽出（```jsonブロックがある場合も対応）
     const jsonMatch = text.match(/\{[\s\S]*\}/);

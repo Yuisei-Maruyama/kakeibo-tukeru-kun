@@ -22,16 +22,16 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@google-cloud/functions-framework": "^3.3.0",
     "@google-cloud/firestore": "^7.1.0",
+    "@google-cloud/functions-framework": "^3.3.0",
     "@google-cloud/secret-manager": "^5.0.1",
-    "@google/generative-ai": "^0.21.0",
-    "googleapis": "^128.0.0",
-    "@line/bot-sdk": "^9.0.0"
+    "@google/genai": "^1.31.0",
+    "@line/bot-sdk": "^9.0.0",
+    "googleapis": "^128.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.3.3",
     "@types/node": "^20.10.6",
-    "esbuild": "^0.19.11"
+    "esbuild": "^0.19.11",
+    "typescript": "^5.3.3"
   }
 }
