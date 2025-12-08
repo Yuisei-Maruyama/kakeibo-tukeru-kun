@@ -1,6 +1,6 @@
 import { HttpFunction } from '@google-cloud/functions-framework';
 import { handleWebhook } from './handlers/webhook.js';
-import { handleScheduledReport } from './handlers/scheduler.js';
+import { handleScheduledReport, handleDailyScheduleNotification } from './handlers/scheduler.js';
 
 /**
  * LINE Webhook Handler
@@ -16,4 +16,12 @@ export const webhook: HttpFunction = async (req, res) => {
  */
 export const scheduledReport: HttpFunction = async (req, res) => {
   await handleScheduledReport(req, res);
+};
+
+/**
+ * Daily Schedule Notification Handler
+ * Cloud Scheduler から呼び出され、毎朝7:00に当日の予定を通知
+ */
+export const dailyScheduleNotification: HttpFunction = async (req, res) => {
+  await handleDailyScheduleNotification(req, res);
 };

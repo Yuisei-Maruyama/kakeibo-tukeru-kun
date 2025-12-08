@@ -38,6 +38,7 @@ usage() {
     echo "  scheduler   Cloud Scheduler のみ設定"
     echo "  webhook     Webhook ハンドラーのみデプロイ"
     echo "  report      スケジューラーハンドラーのみデプロイ"
+    echo "  schedule    予定通知ハンドラーのみデプロイ"
     echo ""
     echo "Environment Variables:"
     echo "  PROJECT_ID  GCP プロジェクトID (default: kakeibo-line-bot)"
@@ -99,11 +100,33 @@ deploy_report() {
     log_info "スケジューラーハンドラーのデプロイ完了"
 }
 
+# 毎朝の予定通知ハンドラーのデプロイ
+deploy_daily_schedule() {
+    log_info "予定通知ハンドラーをデプロイ中..."
+
+    gcloud functions deploy dailyScheduleNotification \
+        --gen2 \
+        --runtime=nodejs20 \
+        --region="${REGION}" \
+        --source="${FUNCTIONS_DIR}" \
+        --entry-point=dailyScheduleNotification \
+        --trigger-http \
+        --no-allow-unauthenticated \
+        --memory=256MB \
+        --timeout=60s \
+        --max-instances=2 \
+        --min-instances=0 \
+        --set-secrets="LINE_CHANNEL_ACCESS_TOKEN=LINE_CHANNEL_ACCESS_TOKEN:latest,GOOGLE_CALENDAR_ID=GOOGLE_CALENDAR_ID:latest"
+
+    log_info "予定通知ハンドラーのデプロイ完了"
+}
+
 # Cloud Functions デプロイ
 deploy_functions() {
     log_info "Cloud Functions をデプロイ中..."
     deploy_webhook
     deploy_report
+    deploy_daily_schedule
     log_info "全ての Cloud Functions デプロイ完了"
 }
 
@@ -124,6 +147,11 @@ create_scheduler_service_account() {
     # Cloud Functions (2nd gen) の呼び出し権限を付与
     log_info "Cloud Functions の呼び出し権限を付与中..." >&2
     gcloud functions add-invoker-policy-binding scheduledReport \
+        --region="${REGION}" \
+        --member="serviceAccount:${SA_EMAIL}" \
+        --quiet >&2 || true
+
+    gcloud functions add-invoker-policy-binding dailyScheduleNotification \
         --region="${REGION}" \
         --member="serviceAccount:${SA_EMAIL}" \
         --quiet >&2 || true
@@ -193,6 +221,30 @@ setup_scheduler() {
         --oidc-service-account-email="${SA_EMAIL}" \
         --oidc-token-audience="${FUNCTION_URL}"
 
+    # 毎朝7:00の予定通知ジョブ
+    log_info "毎朝の予定通知ジョブを設定中..."
+    local FUNCTION_URL_SCHEDULE="https://${REGION}-${PROJECT_ID}.cloudfunctions.net/dailyScheduleNotification"
+
+    # 既存ジョブを削除（存在する場合）
+    if gcloud scheduler jobs describe kakeibo-daily-schedule-notification --location="${REGION}" &>/dev/null; then
+        log_info "既存ジョブを削除中..."
+        gcloud scheduler jobs delete kakeibo-daily-schedule-notification \
+            --location="${REGION}" \
+            --quiet
+    fi
+
+    # 新規作成（毎朝7:00に実行）
+    gcloud scheduler jobs create http kakeibo-daily-schedule-notification \
+        --location="${REGION}" \
+        --schedule="0 7 * * *" \
+        --time-zone="Asia/Tokyo" \
+        --uri="${FUNCTION_URL_SCHEDULE}" \
+        --http-method=POST \
+        --headers="Content-Type=application/json" \
+        --message-body='{"type":"daily-schedule"}' \
+        --oidc-service-account-email="${SA_EMAIL}" \
+        --oidc-token-audience="${FUNCTION_URL_SCHEDULE}"
+
     log_info "Cloud Scheduler 設定完了"
     echo ""
     log_info "設定されたジョブ:"
@@ -223,6 +275,9 @@ main() {
             ;;
         report)
             deploy_report
+            ;;
+        schedule)
+            deploy_daily_schedule
             ;;
         *)
             log_error "不明なコマンド: $1"

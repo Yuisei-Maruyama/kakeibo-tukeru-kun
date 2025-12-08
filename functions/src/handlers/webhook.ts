@@ -6,8 +6,8 @@ import * as crypto from 'crypto';
 // Services
 import { analyzeReceiptImage } from '../services/gemini.js';
 import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses } from '../services/firestore.js';
-import { createCalendarEvent, deleteCalendarEvent } from '../services/calendar.js';
-import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage } from '../services/line.js';
+import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '../services/calendar.js';
+import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, getUserDisplayName } from '../services/line.js';
 
 /**
  * 署名検証
@@ -52,7 +52,13 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     res.status(200).json({ status: 'ok' });
   } catch (error) {
     console.error('Webhook error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    const errorStack = error instanceof Error ? error.stack : '';
+    console.error('Error details:', { message: errorMsg, stack: errorStack });
+    res.status(500).json({
+      error: 'Internal server error',
+      details: errorMsg,
+    });
   }
 }
 
@@ -112,19 +118,12 @@ async function handleImageMessage(
     }
 
     // ユーザー情報を取得・作成
-    // 実際の表示名はLINE APIから取得する必要がありますが、簡略化のため仮の名前を使用
-    const userName = userId.slice(0, 8); // 仮の名前
+    // LINEからユーザーの表示名を取得
+    const userName = await getUserDisplayName(groupId, userId, accessToken);
     const user = await getOrCreateUser(userId, userName, groupId);
 
     // 日付をTimestampに変換
     const expenseDate = Timestamp.fromDate(new Date(analysisResult.date));
-
-    // 外食費用の場合は残高を更新
-    let newBalance = user.diningBalance;
-    if (analysisResult.category === '外食費用') {
-      newBalance = user.diningBalance - analysisResult.amount;
-      await updateDiningBalance(userId, newBalance);
-    }
 
     // カレンダーに登録
     const calendarEventId = await createCalendarEvent(
@@ -148,6 +147,13 @@ async function handleImageMessage(
       calendarEventId,
     });
 
+    // 外食費用の場合は残高を更新（カレンダー登録とFirestore保存が成功した後）
+    let newBalance = user.diningBalance;
+    if (analysisResult.category === '外食費用') {
+      newBalance = user.diningBalance - analysisResult.amount;
+      await updateDiningBalance(userId, newBalance);
+    }
+
     // 返信メッセージを送信
     const responseMessage = createRegistrationMessage(
       analysisResult.category,
@@ -161,7 +167,12 @@ async function handleImageMessage(
     await replyMessage(replyToken, responseMessage, accessToken);
   } catch (error) {
     console.error('Image message handling error:', error);
-    await replyMessage(replyToken, createErrorMessage(), accessToken);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    await replyMessage(
+      replyToken,
+      createErrorMessage(`画像処理エラー: ${errorMsg}`),
+      accessToken
+    );
   }
 }
 
@@ -178,13 +189,18 @@ async function handleTextMessage(
 ): Promise<void> {
   const text = message.text.trim();
 
-  // コマンドでない場合は無視
-  if (!text.startsWith('@')) {
+  // コマンドでない場合は無視（全角・半角の@に対応）
+  if (!text.startsWith('@') && !text.startsWith('＠')) {
     return;
   }
 
   try {
-    const command = text.slice(1).trim();
+    // 全角・半角スペースを統一（全て半角スペースに変換）
+    const normalizedText = text.slice(1).trim().replace(/　/g, ' ');
+    const command = normalizedText;
+
+    // メンション情報を取得（LINEのメンション機能を使用している場合）
+    const mentions = (message as any).mention?.mentionees || [];
 
     // @ヘルプコマンド
     if (command === 'ヘルプ') {
@@ -217,7 +233,12 @@ async function handleTextMessage(
     // @追加コマンド
     else if (command.startsWith('追加 ')) {
       const args = command.replace('追加 ', '').trim();
-      await handleAddCommand(replyToken, userId, groupId, args, accessToken, calendarId);
+      await handleAddCommand(replyToken, userId, groupId, args, accessToken, calendarId, mentions);
+    }
+    // @予定コマンド
+    else if (command.startsWith('予定 ')) {
+      const args = command.replace('予定 ', '').trim();
+      await handleScheduleCommand(replyToken, userId, groupId, args, accessToken, calendarId, mentions);
     }
     // 不明なコマンド
     else {
@@ -229,7 +250,12 @@ async function handleTextMessage(
     }
   } catch (error) {
     console.error('Text message handling error:', error);
-    await replyMessage(replyToken, '⚠️ エラーが発生しました', accessToken);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    await replyMessage(
+      replyToken,
+      `⚠️ エラーが発生しました\n\n詳細: ${errorMsg}`,
+      accessToken
+    );
   }
 }
 
@@ -374,7 +400,12 @@ async function handleDeleteCommand(
     await replyMessage(replyToken, message, accessToken);
   } catch (error) {
     console.error('Delete command error:', error);
-    await replyMessage(replyToken, '❌ 削除に失敗しました', accessToken);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    await replyMessage(
+      replyToken,
+      `❌ 削除に失敗しました\n\n詳細: ${errorMsg}`,
+      accessToken
+    );
   }
 }
 
@@ -387,25 +418,41 @@ async function handleAddCommand(
   groupId: string,
   args: string,
   accessToken: string,
-  calendarId: string
+  calendarId: string,
+  mentions: any[] = []
 ): Promise<void> {
   try {
-    // 引数をパース（例: "外食費用 田中 1280"）
+    // 引数をパース（例: "外食費用 田中 1280" または "外食費用 田中 1280 12/1"）
     const parts = args.split(' ').filter(p => p.length > 0);
 
     if (parts.length < 3) {
       await replyMessage(
         replyToken,
-        '❌ 形式が正しくありません\n\n使い方: @追加 {カテゴリー} {支払い者名} {金額}\n例: @追加 外食費用 田中 1280',
+        '❌ 形式が正しくありません\n\n使い方: @追加 {カテゴリー} {支払い者名} {金額} [{日付}]\n例: @追加 外食費用 田中 1280\n例: @追加 外食費用 @自分 1280\n例: @追加 外食費用 田中 1280 12/1',
         accessToken
       );
       return;
     }
 
     const category = parts[0];
-    const userName = parts[1];
+    let payerName = parts[1]; // 支払い者名（代理入力可能）
     const amountStr = parts[2].replace(/[,，]/g, '');
     const amount = parseInt(amountStr, 10);
+    const dateInput = parts.length >= 4 ? parts[3] : null; // 日付（オプション）
+
+    // LINEからコマンド実行者の表示名を取得
+    const displayName = await getUserDisplayName(groupId, userId, accessToken);
+
+    // @自分が指定された場合は、送信者の名前を使用
+    if (payerName === '@自分') {
+      payerName = displayName;
+    }
+    // メンションされたユーザーがいる場合、その表示名を取得
+    else if (mentions.length > 0 && payerName.startsWith('@')) {
+      // メンションの最初のユーザーを使用
+      const mentionedUserId = mentions[0].userId;
+      payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+    }
 
     // カテゴリーチェック
     if (category !== '外食費用' && category !== '買い物費用') {
@@ -427,45 +474,77 @@ async function handleAddCommand(
       return;
     }
 
-    // ユーザー情報を取得・作成
-    const user = await getOrCreateUser(userId, userName, groupId);
+    // ユーザー情報を取得・作成（コマンド実行者として）
+    const user = await getOrCreateUser(userId, displayName, groupId);
 
-    // 外食費用の場合は残高を更新
-    let newBalance = user.diningBalance;
-    if (category === '外食費用') {
-      newBalance = user.diningBalance - amount;
-      await updateDiningBalance(userId, newBalance);
+    // 日付をパース
+    let expenseDate: Date;
+    if (dateInput) {
+      // 日付が指定された場合（例: "12/1"）
+      const dateParts = dateInput.split('/');
+      if (dateParts.length === 2) {
+        const month = parseInt(dateParts[0], 10);
+        const day = parseInt(dateParts[1], 10);
+        const year = new Date().getFullYear();
+        expenseDate = new Date(year, month - 1, day);
+
+        // 日付が無効な場合
+        if (isNaN(expenseDate.getTime())) {
+          await replyMessage(
+            replyToken,
+            '❌ 日付の形式が正しくありません\n例: @追加 外食費用 田中 1280 12/1',
+            accessToken
+          );
+          return;
+        }
+      } else {
+        await replyMessage(
+          replyToken,
+          '❌ 日付の形式が正しくありません\n例: @追加 外食費用 田中 1280 12/1',
+          accessToken
+        );
+        return;
+      }
+    } else {
+      // 日付が指定されない場合は今日の日付を使用
+      expenseDate = new Date();
     }
 
-    // カレンダーに登録
-    const today = new Date();
-    const dateStr = today.toISOString().split('T')[0];
+    // カレンダーに登録（支払い者名を使用）
+    const dateStr = expenseDate.toISOString().split('T')[0];
 
     const calendarEventId = await createCalendarEvent(
       calendarId,
-      userName,
+      payerName,
       amount,
       category,
       '手動入力',
       dateStr
     );
 
-    // Firestoreに保存
+    // Firestoreに保存（支払い者名を使用）
     await saveExpense({
       userId,
-      userName,
+      userName: payerName,
       amount,
       category: category,
       storeName: '手動入力',
-      date: Timestamp.fromDate(today),
+      date: Timestamp.fromDate(expenseDate),
       calendarEventId,
     });
+
+    // 外食費用の場合は残高を更新（カレンダー登録とFirestore保存が成功した後）
+    let newBalance = user.diningBalance;
+    if (category === '外食費用') {
+      newBalance = user.diningBalance - amount;
+      await updateDiningBalance(userId, newBalance);
+    }
 
     // 返信メッセージを送信
     const responseMessage = createRegistrationMessage(
       category,
       amount,
-      userName,
+      payerName,
       '手動入力',
       dateStr,
       category === '外食費用' ? newBalance : undefined
@@ -474,6 +553,110 @@ async function handleAddCommand(
     await replyMessage(replyToken, responseMessage, accessToken);
   } catch (error) {
     console.error('Add command error:', error);
-    await replyMessage(replyToken, '❌ 追加に失敗しました', accessToken);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    const errorStack = error instanceof Error ? error.stack : '';
+    await replyMessage(
+      replyToken,
+      `❌ 追加に失敗しました\n\n詳細: ${errorMsg}\n\n${errorStack ? `スタック:\n${errorStack.substring(0, 200)}...` : ''}`,
+      accessToken
+    );
+  }
+}
+
+/**
+ * 予定コマンド処理
+ */
+async function handleScheduleCommand(
+  replyToken: string,
+  userId: string,
+  groupId: string,
+  args: string,
+  accessToken: string,
+  calendarId: string,
+  mentions: any[] = []
+): Promise<void> {
+  try {
+    // 引数をパース（例: "田中 会議" または "田中 会議 12/15"）
+    const parts = args.split(' ').filter(p => p.length > 0);
+
+    if (parts.length < 2) {
+      await replyMessage(
+        replyToken,
+        '❌ 形式が正しくありません\n\n使い方: @予定 {ユーザー名} {予定内容} [{日付}]\n例: @予定 田中 会議\n例: @予定 @自分 会議\n例: @予定 田中 会議 12/15',
+        accessToken
+      );
+      return;
+    }
+
+    let userName = parts[0];
+    const scheduleContent = parts[1];
+    const dateInput = parts.length >= 3 ? parts[2] : null;
+
+    // LINEからコマンド実行者の表示名を取得
+    const displayName = await getUserDisplayName(groupId, userId, accessToken);
+
+    // @自分が指定された場合は、送信者の名前を使用
+    if (userName === '@自分') {
+      userName = displayName;
+    }
+    // メンションされたユーザーがいる場合、その表示名を取得
+    else if (mentions.length > 0 && userName.startsWith('@')) {
+      const mentionedUserId = mentions[0].userId;
+      userName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+    }
+
+    // 日付をパース
+    let scheduleDate: Date;
+    if (dateInput) {
+      // 日付が指定された場合（例: "12/15"）
+      const dateParts = dateInput.split('/');
+      if (dateParts.length === 2) {
+        const month = parseInt(dateParts[0], 10);
+        const day = parseInt(dateParts[1], 10);
+        const year = new Date().getFullYear();
+        scheduleDate = new Date(year, month - 1, day);
+
+        if (isNaN(scheduleDate.getTime())) {
+          await replyMessage(
+            replyToken,
+            '❌ 日付の形式が正しくありません\n例: @予定 田中 会議 12/15',
+            accessToken
+          );
+          return;
+        }
+      } else {
+        await replyMessage(
+          replyToken,
+          '❌ 日付の形式が正しくありません\n例: @予定 田中 会議 12/15',
+          accessToken
+        );
+        return;
+      }
+    } else {
+      scheduleDate = new Date();
+    }
+
+    const dateStr = scheduleDate.toISOString().split('T')[0];
+
+    // カレンダーに予定を登録
+    await createScheduleEvent(
+      calendarId,
+      userName,
+      scheduleContent,
+      dateStr
+    );
+
+    // 返信メッセージを送信
+    const responseMessage = `✅ 予定を登録しました！\n\n👤 ${userName}\n📝 ${scheduleContent}\n📅 ${dateStr}`;
+
+    await replyMessage(replyToken, responseMessage, accessToken);
+  } catch (error) {
+    console.error('Schedule command error:', error);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    await replyMessage(
+      replyToken,
+      `❌ 予定登録に失敗しました\n\n詳細: ${errorMsg}`,
+      accessToken
+    );
   }
 }

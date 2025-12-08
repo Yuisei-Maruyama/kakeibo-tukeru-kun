@@ -67,6 +67,25 @@ export async function pushMessage(
 }
 
 /**
+ * グループメンバーのプロフィール（表示名）を取得
+ */
+export async function getUserDisplayName(
+  groupId: string,
+  userId: string,
+  accessToken: string
+): Promise<string> {
+  try {
+    const client = getLineClient(accessToken);
+    const profile = await client.getGroupMemberProfile(groupId, userId);
+    return profile.displayName;
+  } catch (error) {
+    console.error('Failed to get user display name:', error);
+    // エラー時はuserIdの最初の8文字を返す
+    return userId.slice(0, 8);
+  }
+}
+
+/**
  * 登録完了メッセージを生成
  */
 export function createRegistrationMessage(
@@ -123,8 +142,23 @@ export function createHelpMessage(): string {
   message += `@履歴 - 直近10件の支出履歴\n\n`;
 
   message += `【操作】\n`;
-  message += `@追加 {カテゴリー} {支払い者名} {金額}\n`;
-  message += `  例: @追加 外食費用 田中 1280\n\n`;
+  message += `@追加 {カテゴリー} {支払い者名} {金額} [{日付}]\n`;
+  message += `  例: @追加 外食費用 田中 1280\n`;
+  message += `  例: @追加 外食費用 @自分 1280\n`;
+  message += `  例: @追加 外食費用 @ユーザー 1280\n`;
+  message += `  例: @追加 外食費用 田中 1280 12/1\n`;
+  message += `  ※ @自分 で自分の名前を自動入力\n`;
+  message += `  ※ @メンション でユーザー指定可能\n`;
+  message += `  ※ 日付を省略すると今日の日付になります\n\n`;
+
+  message += `@予定 {ユーザー名} {予定内容} [{日付}]\n`;
+  message += `  例: @予定 田中 会議\n`;
+  message += `  例: @予定 @自分 会議\n`;
+  message += `  例: @予定 @ユーザー 会議\n`;
+  message += `  例: @予定 田中 会議 12/15\n`;
+  message += `  ※ @自分 で自分の名前を自動入力\n`;
+  message += `  ※ @メンション でユーザー指定可能\n`;
+  message += `  ※ 日付を省略すると今日の日付になります\n\n`;
 
   message += `@削除 {日付} {金額}\n`;
   message += `  例: @削除 12/3 1280\n\n`;

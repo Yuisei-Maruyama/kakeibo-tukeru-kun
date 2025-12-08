@@ -1,6 +1,7 @@
 import { Request, Response } from '@google-cloud/functions-framework';
 import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances } from '../services/firestore.js';
 import { pushMessage, createReportMessage } from '../services/line.js';
+import { getTodaySchedules } from '../services/calendar.js';
 import { ReportData, ReportType, UserExpenses, MonthlySummary } from '../types/index.js';
 
 /**
@@ -221,6 +222,48 @@ async function generateMonthlySummary(
       refundAmount,
     },
   };
+}
+
+/**
+ * 毎朝の予定通知ハンドラー
+ */
+export async function handleDailyScheduleNotification(_req: Request, res: Response): Promise<void> {
+  try {
+    const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
+    const calendarId = process.env.GOOGLE_CALENDAR_ID || '';
+    const settings = await getSettings();
+
+    if (!settings || !settings.lineGroupId) {
+      console.error('Settings not found or lineGroupId not set');
+      res.status(500).json({ error: 'Settings not configured' });
+      return;
+    }
+
+    const today = new Date();
+    const schedules = await getTodaySchedules(calendarId, today);
+
+    if (schedules.length === 0) {
+      console.log('No schedules for today');
+      res.status(200).json({ status: 'ok', message: 'No schedules' });
+      return;
+    }
+
+    // 予定メッセージを生成
+    let message = `📅 本日の予定 (${today.getMonth() + 1}/${today.getDate()})\n\n`;
+    schedules.forEach((schedule, index) => {
+      message += `${index + 1}. 👤 ${schedule.userName}\n`;
+      message += `   📝 ${schedule.content}\n\n`;
+    });
+
+    // LINEグループに送信
+    await pushMessage(settings.lineGroupId, message, accessToken);
+
+    console.log('Daily schedule notification sent');
+    res.status(200).json({ status: 'ok', schedules: schedules.length });
+  } catch (error) {
+    console.error('Daily schedule notification error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 }
 
 /**

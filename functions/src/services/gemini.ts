@@ -115,13 +115,20 @@ export async function analyzeReceiptImage(
     return analysisResult;
   } catch (error) {
     console.error('Failed to analyze receipt image:', error);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    const errorStack = error instanceof Error ? error.stack : '';
+    console.error('Gemini API error details:', {
+      message: errorMsg,
+      stack: errorStack,
+      errorType: error instanceof Error ? error.constructor.name : typeof error,
+    });
     return {
       date: '',
       amount: 0,
       category: '外食費用',
       storeName: '',
       error: '画像を解析できませんでした',
-      reason: error instanceof Error ? error.message : '不明なエラー',
+      reason: errorMsg,
     };
   }
 }
