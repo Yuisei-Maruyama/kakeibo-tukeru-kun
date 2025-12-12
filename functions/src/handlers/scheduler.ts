@@ -4,6 +4,7 @@ import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, e
 import { pushMessage, createReportMessage } from '../services/line.js';
 import { getTodaySchedules, getMonthlyExpenseEvents } from '../services/calendar.js';
 import { ReportData, ReportType, UserExpenses, MonthlySummary } from '../types/index.js';
+import { getJSTYear, getJSTMonth, getJSTInfo } from '../utils/date.js';
 
 /**
  * 定期レポートハンドラー
@@ -20,7 +21,12 @@ export async function handleScheduledReport(req: Request, res: Response): Promis
     }
 
     const reportType: ReportType = req.body?.reportType || 'mid-month';
-    const now = new Date();
+
+    // JST（日本時間）で現在日時を取得
+    const jstInfo = getJSTInfo();
+    console.log(`Generating ${reportType} report (JST: ${jstInfo.formatted})`);
+
+    const now = new Date(); // getReportPeriodで使用（内部でJST変換）
 
     // レポート期間を決定
     const period = getReportPeriod(now, reportType);
@@ -260,8 +266,10 @@ export async function handleDailyScheduleNotification(_req: Request, res: Respon
       return;
     }
 
-    const today = new Date();
-    console.log('Fetching schedules for:', today.toISOString());
+    // JST（日本時間）で今日の日付を取得
+    const jstInfo = getJSTInfo();
+    const today = new Date(); // カレンダーAPIに渡すためのDate（内部でJST変換される）
+    console.log(`Fetching schedules for: ${jstInfo.formatted} (JST)`);
 
     const schedules = await getTodaySchedules(calendarId, today);
     console.log(`Found ${schedules.length} schedules for today`);
@@ -273,7 +281,7 @@ export async function handleDailyScheduleNotification(_req: Request, res: Respon
     }
 
     // 予定メッセージを生成
-    let message = `📅 本日の予定 (${today.getMonth() + 1}/${today.getDate()})\n\n`;
+    let message = `📅 本日の予定 (${jstInfo.month}/${jstInfo.day})\n\n`;
     schedules.forEach((schedule, index) => {
       message += `${index + 1}. 👤 ${schedule.userName}\n`;
       message += `   📝 ${schedule.content}\n\n`;
@@ -328,11 +336,12 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
       return;
     }
 
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1; // 1-12
+    // JST（日本時間）で年月を取得
+    const year = getJSTYear();
+    const month = getJSTMonth();
+    const jstInfo = getJSTInfo();
 
-    console.log(`Starting calendar sync for ${year}/${month}`);
+    console.log(`Starting calendar sync for ${year}/${month} (JST: ${jstInfo.formatted})`);
 
     // Googleカレンダーから当月の支出イベントを取得
     const expenseEvents = await getMonthlyExpenseEvents(calendarId, year, month);

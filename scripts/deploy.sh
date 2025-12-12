@@ -33,12 +33,13 @@ usage() {
     echo "Usage: $0 [command]"
     echo ""
     echo "Commands:"
-    echo "  all         全てデプロイ (functions + scheduler)"
-    echo "  functions   Cloud Functions のみデプロイ"
-    echo "  scheduler   Cloud Scheduler のみ設定"
-    echo "  webhook     Webhook ハンドラーのみデプロイ"
-    echo "  report      スケジューラーハンドラーのみデプロイ"
-    echo "  schedule    予定通知ハンドラーのみデプロイ"
+    echo "  all           全てデプロイ (functions + scheduler)"
+    echo "  functions     Cloud Functions のみデプロイ"
+    echo "  scheduler     Cloud Scheduler のみ設定"
+    echo "  webhook       Webhook ハンドラーのみデプロイ"
+    echo "  report        スケジューラーハンドラーのみデプロイ"
+    echo "  schedule      予定通知ハンドラーのみデプロイ"
+    echo "  calendar-sync カレンダー同期ハンドラーのみデプロイ"
     echo ""
     echo "Environment Variables:"
     echo "  PROJECT_ID  GCP プロジェクトID (default: kakeibo-line-bot)"
@@ -68,6 +69,7 @@ deploy_webhook() {
         --timeout=60s \
         --max-instances=10 \
         --min-instances=0 \
+        --set-env-vars=TZ=Asia/Tokyo \
         --set-secrets="LINE_CHANNEL_SECRET=LINE_CHANNEL_SECRET:latest,LINE_CHANNEL_ACCESS_TOKEN=LINE_CHANNEL_ACCESS_TOKEN:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,GOOGLE_CALENDAR_ID=GOOGLE_CALENDAR_ID:latest"
 
     log_info "Webhook ハンドラーのデプロイ完了"
@@ -95,6 +97,7 @@ deploy_report() {
         --timeout=120s \
         --max-instances=2 \
         --min-instances=0 \
+        --set-env-vars=TZ=Asia/Tokyo \
         --set-secrets="LINE_CHANNEL_ACCESS_TOKEN=LINE_CHANNEL_ACCESS_TOKEN:latest,GOOGLE_CALENDAR_ID=GOOGLE_CALENDAR_ID:latest"
 
     log_info "スケジューラーハンドラーのデプロイ完了"
@@ -116,9 +119,32 @@ deploy_daily_schedule() {
         --timeout=60s \
         --max-instances=2 \
         --min-instances=0 \
+        --set-env-vars=TZ=Asia/Tokyo \
         --set-secrets="LINE_CHANNEL_ACCESS_TOKEN=LINE_CHANNEL_ACCESS_TOKEN:latest,GOOGLE_CALENDAR_ID=GOOGLE_CALENDAR_ID:latest"
 
     log_info "予定通知ハンドラーのデプロイ完了"
+}
+
+# カレンダー同期ハンドラーのデプロイ
+deploy_calendar_sync() {
+    log_info "カレンダー同期ハンドラーをデプロイ中..."
+
+    gcloud functions deploy calendarSync \
+        --gen2 \
+        --runtime=nodejs20 \
+        --region="${REGION}" \
+        --source="${FUNCTIONS_DIR}" \
+        --entry-point=calendarSync \
+        --trigger-http \
+        --no-allow-unauthenticated \
+        --memory=256MB \
+        --timeout=120s \
+        --max-instances=2 \
+        --min-instances=0 \
+        --set-env-vars=TZ=Asia/Tokyo \
+        --set-secrets="GOOGLE_CALENDAR_ID=GOOGLE_CALENDAR_ID:latest"
+
+    log_info "カレンダー同期ハンドラーのデプロイ完了"
 }
 
 # Cloud Functions デプロイ
@@ -127,6 +153,7 @@ deploy_functions() {
     deploy_webhook
     deploy_report
     deploy_daily_schedule
+    deploy_calendar_sync
     log_info "全ての Cloud Functions デプロイ完了"
 }
 
@@ -152,6 +179,11 @@ create_scheduler_service_account() {
         --quiet >&2 || true
 
     gcloud functions add-invoker-policy-binding dailyScheduleNotification \
+        --region="${REGION}" \
+        --member="serviceAccount:${SA_EMAIL}" \
+        --quiet >&2 || true
+
+    gcloud functions add-invoker-policy-binding calendarSync \
         --region="${REGION}" \
         --member="serviceAccount:${SA_EMAIL}" \
         --quiet >&2 || true
@@ -278,6 +310,9 @@ main() {
             ;;
         schedule)
             deploy_daily_schedule
+            ;;
+        calendar-sync)
+            deploy_calendar_sync
             ;;
         *)
             log_error "不明なコマンド: $1"

@@ -94,6 +94,10 @@ deploy-webhook: ## Webhookハンドラーのみデプロイ
 deploy-report: ## スケジューラーハンドラーのみデプロイ
 	@./scripts/deploy.sh report
 
+.PHONY: deploy-calendar-sync
+deploy-calendar-sync: ## カレンダー同期ハンドラーのみデプロイ
+	@./scripts/deploy.sh calendar-sync
+
 # =============================================================================
 # 開発
 # =============================================================================

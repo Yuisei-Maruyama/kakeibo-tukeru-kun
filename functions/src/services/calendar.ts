@@ -295,7 +295,7 @@ export async function getTodaySchedules(
         // 例: "田中の予定: 買い物" や "予定 - 会議"
         if (summary.includes('予定')) {
           // コロンで分割してみる（例: "田中の予定: 買い物"）
-          const colonMatch = summary.match(/(.+?)[のの]?予定[:：]\s*(.+)/);
+          const colonMatch = summary.match(/(.+?)の?予定[:：]\s*(.+)/);
           if (colonMatch) {
             return {
               userName: colonMatch[1].trim(),
@@ -389,45 +389,68 @@ export function parseExpenseEventTitle(
     // カテゴリー文字列を除去（様々なパターンに対応）
     let afterCategory = summary;
 
-    // まず完全一致で除去を試みる
-    afterCategory = afterCategory.replace(/\[?(外食費用|買い物費用)\]?\s*/, '');
-
-    // 部分一致のキーワードを除去
+    // 1回のreplaceで複数パターンに対応（効率化）
     if (category === '外食費用') {
-      afterCategory = afterCategory
-        .replace(/\[?外食費?\]?\s*/, '');
+      // [外食費用]、外食費用、[外食費]、外食費、[外食]、外食 を除去
+      afterCategory = afterCategory.replace(/\[?(外食費用|外食費|外食)\]?\s*/, '');
     } else if (category === '買い物費用') {
-      afterCategory = afterCategory
-        .replace(/\[?買い?物\]?\s*/, '');
+      // [買い物費用]、買い物費用、[買い物]、買い物、[買物]、買物 を除去
+      afterCategory = afterCategory.replace(/\[?(買い物費用|買い物|買物)\]?\s*/, '');
     }
 
     afterCategory = afterCategory.trim();
 
-    // 金額を抽出（¥付き・なし、円付き・なし、カンマ付きも対応）
-    const amountMatch = afterCategory.match(/[¥￥]?\s*([\d,，]+)\s*円?/);
-    if (!amountMatch) {
-      console.warn(`No amount found in event: ${summary}`);
+    // 先に店舗名を抽出・除去（金額との競合を避けるため）
+    const storeMatch = afterCategory.match(/\(([^)]+)\)/);
+    if (storeMatch) {
+      storeName = storeMatch[1].trim();
+      // 店舗名を除去
+      afterCategory = afterCategory.replace(/\([^)]+\)/, '').trim();
+    }
+
+    // 金額を抽出（¥付き・円付き・記号なしのすべてに対応）
+    // パターン1: ¥記号付き（優先度：高）
+    // パターン2: 円付き（優先度：中）
+    // パターン3: 記号なし・3桁以上の数字（優先度：低）
+    let amountMatch = afterCategory.match(/[¥￥]\s*([\d,，]+)/);
+    let amountStr = '';
+
+    if (amountMatch) {
+      // ¥記号付きの金額
+      amountStr = amountMatch[1];
+    } else {
+      // 円付きの金額
+      amountMatch = afterCategory.match(/(\d[\d,，]*)\s*円/);
+      if (amountMatch) {
+        amountStr = amountMatch[1];
+      } else {
+        // 記号なし・円なしの金額（3桁以上の数字を金額と判定）
+        // ユーザー名の数字と区別するため、空白の後にある3桁以上の数字にマッチ
+        amountMatch = afterCategory.match(/(?:^|\s)(\d{3,}[\d,，]*)(?:\s|$)/);
+        if (amountMatch) {
+          amountStr = amountMatch[1];
+        }
+      }
+    }
+
+    if (!amountStr) {
+      console.warn(`No amount found in event: ${summary}. Supported formats: ¥1000, 1000円, 1000 (3+ digits)`);
       return null;
     }
 
-    const amountStr = amountMatch[1].replace(/[,，]/g, ''); // カンマを除去
-    amount = parseInt(amountStr, 10);
+    // カンマを除去して数値に変換
+    amount = parseInt(amountStr.replace(/[,，]/g, ''), 10);
 
     if (isNaN(amount) || amount <= 0) {
       console.warn(`Invalid amount in event: ${summary}`);
       return null;
     }
 
-    // 店舗名を抽出（()付きの場合）
-    const storeMatch = afterCategory.match(/\((.+?)\)/);
-    if (storeMatch) {
-      storeName = storeMatch[1].trim();
-    }
-
-    // ユーザー名を抽出（金額と店舗名を除いた部分）
+    // ユーザー名を抽出（金額を除いた部分）
     let userNamePart = afterCategory
-      .replace(/[¥￥]?\s*[\d,，]+\s*円?/, '') // 金額を除去（円付きも対応）
-      .replace(/\(.+?\)/, '') // 店舗名を除去
+      .replace(/[¥￥]\s*[\d,，]+/, '') // ¥付き金額を除去
+      .replace(/\d[\d,，]*\s*円/, '') // 円付き金額を除去
+      .replace(/(?:^|\s)\d{3,}[\d,，]*(?:\s|$)/, '') // 記号なし金額を除去
       .trim();
 
     // 残った文字列がユーザー名

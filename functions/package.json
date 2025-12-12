@@ -12,7 +12,8 @@
     "dev": "npm run build && npx @google-cloud/functions-framework --target=webhook --source=dist",
     "lint": "eslint src --ext .ts",
     "test": "echo \"Error: no test specified\" && exit 0",
-    "fix-balance": "npm run build && node dist/scripts/fix-balance.js"
+    "fix-balance": "npm run build && node dist/scripts/fix-balance.js",
+    "test-timezone": "npm run build && node dist/scripts/test-timezone.js"
   },
   "keywords": [
     "line",
