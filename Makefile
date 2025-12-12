@@ -168,6 +168,28 @@ clean: ## ビルド成果物を削除
 	@rm -rf functions/dist functions/node_modules
 	@echo "✅ クリーンアップ完了"
 
+.PHONY: pull-cloud-functions
+pull-cloud-functions: ## Cloud Functionsのソースをローカルに取得
+	@echo "📥 Cloud Functions のソースを取得中..."
+	@BUCKET=$$(gcloud functions describe webhook --region=$(REGION) --format="value(buildConfig.source.storageSource.bucket)") && \
+	OBJECT=$$(gcloud functions describe webhook --region=$(REGION) --format="value(buildConfig.source.storageSource.object)") && \
+	TEMP_DIR=$$(mktemp -d) && \
+	echo "  ダウンロード中: gs://$$BUCKET/$$OBJECT" && \
+	gsutil cp "gs://$$BUCKET/$$OBJECT" "$$TEMP_DIR/function-source.zip" && \
+	echo "  展開中..." && \
+	unzip -o "$$TEMP_DIR/function-source.zip" -d "$$TEMP_DIR/source" > /dev/null && \
+	echo "  ローカルに反映中..." && \
+	rm -rf functions/src functions/dist && \
+	cp -r "$$TEMP_DIR/source/src" functions/ && \
+	cp -r "$$TEMP_DIR/source/dist" functions/ && \
+	cp "$$TEMP_DIR/source/package.json" functions/ && \
+	cp "$$TEMP_DIR/source/package-lock.json" functions/ && \
+	rm -rf "$$TEMP_DIR" && \
+	echo "✅ 取得完了"
+	@echo ""
+	@echo "取得したファイル:"
+	@ls -la functions/src/
+
 .PHONY: open-console
 open-console: ## GCPコンソールを開く
 	@open "https://console.cloud.google.com/functions/list?project=$(PROJECT_ID)"

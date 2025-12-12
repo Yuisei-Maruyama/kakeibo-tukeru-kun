@@ -10,9 +10,47 @@ import {
   deleteExpenseByDateAndAmount,
   getAllUsers,
   updateSettings,
+  getUserByDisplayName,
 } from '../services/firestore.js';
 import { createCalendarEvent, createScheduleEvent, deleteCalendarEvent } from '../services/calendar.js';
 import { replyMessage, createRegistrationMessage, getUserDisplayName, createDeleteMessage } from '../services/line.js';
+
+/**
+ * 日付文字列（M/D形式）をパースして未来の日付を返す
+ * 過去の日付になる場合は翌年に調整
+ */
+function parseFutureDate(input: string): Date | null {
+  const dateParts = input.split('/');
+  if (dateParts.length !== 2) {
+    return null;
+  }
+
+  const month = parseInt(dateParts[0], 10);
+  const day = parseInt(dateParts[1], 10);
+
+  if (isNaN(month) || isNaN(day) || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let year = now.getFullYear();
+
+  let date = new Date(year, month - 1, day);
+
+  // 過去の日付の場合は翌年に調整
+  if (date < today) {
+    year++;
+    date = new Date(year, month - 1, day);
+  }
+
+  // 日付が有効かチェック（例: 2/30 は無効）
+  if (isNaN(date.getTime()) || date.getMonth() !== month - 1) {
+    return null;
+  }
+
+  return date;
+}
 
 /**
  * @追加の対話モード開始
@@ -115,6 +153,7 @@ export async function handleConversationInput(
   calendarId: string,
   mentions: any[]
 ): Promise<void> {
+  console.log(`handleConversationInput: type=${session.type}, step=${session.step}, input="${input.substring(0, 50)}"`);
   try {
     if (session.type === 'add_expense') {
       await handleAddExpenseConversation(session, input, replyToken, userId, groupId, accessToken, calendarId, mentions);
@@ -127,11 +166,18 @@ export async function handleConversationInput(
     } else if (session.type === 'change_settings') {
       await handleChangeSettingsConversation(session, input, replyToken, userId, accessToken);
     }
+    console.log(`handleConversationInput completed successfully`);
   } catch (error) {
     console.error('Conversation input error:', error);
-    await deleteConversationSession(userId);
     const errorMsg = error instanceof Error ? error.message : '不明なエラー';
-    await replyMessage(replyToken, `❌ エラーが発生しました\n\n詳細: ${errorMsg}`, accessToken);
+    const errorStack = error instanceof Error ? error.stack : '';
+    console.error('Error details:', { message: errorMsg, stack: errorStack?.substring(0, 500) });
+    await deleteConversationSession(userId);
+    try {
+      await replyMessage(replyToken, `❌ エラーが発生しました\n\n詳細: ${errorMsg}`, accessToken);
+    } catch (replyError) {
+      console.error('Failed to send error reply:', replyError);
+    }
   }
 }
 
@@ -174,18 +220,33 @@ async function handleAddExpenseConversation(
     );
   } else if (step === 'payer_name') {
     let payerName = input.trim();
+    let payerUserId: string | undefined = undefined;
 
     const displayName = await getUserDisplayName(groupId, userId, accessToken);
 
     // 全角・半角の@自分に対応
     if (payerName === '@自分' || payerName === '＠自分') {
       payerName = displayName;
+      payerUserId = userId;
     } else if (mentions.length > 0 && (payerName.startsWith('@') || payerName.startsWith('＠'))) {
+      // LINEメンションの場合
       const mentionedUserId = mentions[0].userId;
       payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+      payerUserId = mentionedUserId;
+    } else {
+      // テキストで名前を入力した場合、既存ユーザーから検索
+      const existingUser = await getUserByDisplayName(payerName);
+      if (existingUser) {
+        payerUserId = existingUser.id;
+        console.log(`Found existing user by name: ${payerName} -> ${payerUserId}`);
+      } else {
+        console.log(`User not found by name: ${payerName}, will use command executor's context`);
+        // ユーザーが見つからない場合はundefinedのまま（date ステップでエラーになる）
+      }
     }
 
     session.data.payerName = payerName;
+    session.data.payerUserId = payerUserId;
     session.step = 'amount';
     await updateConversationSession(userId, { step: 'amount', data: session.data });
 
@@ -232,8 +293,31 @@ async function handleAddExpenseConversation(
     const payerName = data.payerName!;
     const amount = data.amount!;
 
-    const displayName = await getUserDisplayName(groupId, userId, accessToken);
-    const user = await getOrCreateUser(userId, displayName, groupId);
+    // 支払い者のユーザー情報を取得
+    let payerUserId = data.payerUserId;
+    let payerUser;
+
+    if (payerUserId) {
+      // payerUserId が保存されている場合はそれを使用
+      const payerDisplayName = await getUserDisplayName(groupId, payerUserId, accessToken);
+      payerUser = await getOrCreateUser(payerUserId, payerDisplayName, groupId);
+    } else {
+      // payerUserId がない場合は名前で再検索
+      const existingUser = await getUserByDisplayName(payerName);
+      if (existingUser) {
+        payerUser = existingUser;
+        payerUserId = existingUser.id;
+      } else {
+        // ユーザーが見つからない場合はエラー
+        await replyMessage(
+          replyToken,
+          `❌ ユーザー「${payerName}」が見つかりませんでした。\n\n@メンション または @自分 を使用してください。`,
+          accessToken
+        );
+        await deleteConversationSession(userId);
+        return;
+      }
+    }
 
     const dateStr = `${expenseDate.getFullYear()}-${String(expenseDate.getMonth() + 1).padStart(2, '0')}-${String(expenseDate.getDate()).padStart(2, '0')}`;
 
@@ -247,7 +331,7 @@ async function handleAddExpenseConversation(
     );
 
     await saveExpense({
-      userId: user.id,
+      userId: payerUser.id,
       userName: payerName,
       amount,
       category,
@@ -257,10 +341,10 @@ async function handleAddExpenseConversation(
     });
 
     if (category === '外食費用') {
-      // 現在の残高から金額を引く
-      const currentBalance = user.diningBalance;
+      // 支払い者の残高から金額を引く
+      const currentBalance = payerUser.diningBalance;
       const newBalance = currentBalance - amount;
-      await updateDiningBalance(user.id, newBalance);
+      await updateDiningBalance(payerUser.id, newBalance);
 
       const message = createRegistrationMessage(
         category,
@@ -299,6 +383,7 @@ async function handleAddScheduleConversation(
   calendarId: string,
   mentions: any[]
 ): Promise<void> {
+  console.log(`handleAddScheduleConversation: step=${session.step}, input="${input.substring(0, 100)}" (length: ${input.length})`);
   const { step, data } = session;
 
   if (step === 'participant_count') {
@@ -361,35 +446,44 @@ async function handleAddScheduleConversation(
 
     await replyMessage(replyToken, `予定内容を入力してください`, accessToken);
   } else if (step === 'schedule_content') {
-    session.data.scheduleContent = input.trim();
+    // 予定内容を取得（絵文字も含めてそのまま保存）
+    const scheduleContent = input.trim();
+    console.log(`Schedule content received: "${scheduleContent}" (length: ${scheduleContent.length})`);
+
+    if (!scheduleContent || scheduleContent.length === 0) {
+      await replyMessage(replyToken, '❌ 予定内容を入力してください', accessToken);
+      return;
+    }
+
+    session.data.scheduleContent = scheduleContent;
     session.step = 'date';
-    await updateConversationSession(userId, { step: 'date', data: session.data });
+
+    try {
+      await updateConversationSession(userId, { step: 'date', data: session.data });
+      console.log(`Session updated to step: date, scheduleContent: "${scheduleContent}"`);
+    } catch (updateError) {
+      console.error('Failed to update conversation session:', updateError);
+      throw updateError;
+    }
 
     await replyMessage(
       replyToken,
       `日付を入力してください\n（例: 12/15）\n「今日」と入力すると今日の日付になります`,
       accessToken
     );
+    console.log(`Reply message sent for schedule_content step`);
   } else if (step === 'date') {
     let scheduleDate: Date;
     if (input === '今日') {
       scheduleDate = new Date();
     } else {
-      const dateParts = input.split('/');
-      if (dateParts.length === 2) {
-        const month = parseInt(dateParts[0], 10);
-        const day = parseInt(dateParts[1], 10);
-        const year = new Date().getFullYear();
-        scheduleDate = new Date(year, month - 1, day);
-
-        if (isNaN(scheduleDate.getTime())) {
-          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15', accessToken);
-          return;
-        }
-      } else {
+      // 予定は未来の日付のみ許可（過去の日付は翌年に調整）
+      const parsedDate = parseFutureDate(input);
+      if (!parsedDate) {
         await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15', accessToken);
         return;
       }
+      scheduleDate = parsedDate;
     }
 
     const dateStr = `${scheduleDate.getFullYear()}-${String(scheduleDate.getMonth() + 1).padStart(2, '0')}-${String(scheduleDate.getDate()).padStart(2, '0')}`;
@@ -432,7 +526,7 @@ async function handleAddScheduleConversation(
 
         await replyMessage(
           replyToken,
-          `終了時間を入力してください\n（例: 16:00）`,
+          `終了時間を入力してください\n（例: 16:00）\n「なし」と入力すると開始時間のみの予定になります`,
           accessToken
         );
       } else {
@@ -448,10 +542,21 @@ async function handleAddScheduleConversation(
     const dateStr = data.scheduleDate!;
     const startTime = data.scheduleStartTime!;
 
+    // 「なし」の場合は開始時間のみで登録
+    if (input === 'なし' || input === 'ナシ') {
+      await createScheduleEvent(calendarId, userName, scheduleContent, dateStr, startTime);
+
+      const responseMessage = `✅ 予定を登録しました！\n\n👤 ${userName}\n📝 ${scheduleContent}\n📅 ${dateStr}\n⏰ ${startTime} 〜`;
+
+      await replyMessage(replyToken, responseMessage, accessToken);
+      await deleteConversationSession(userId);
+      return;
+    }
+
     // 終了時間のバリデーション
     const timeMatch = input.match(/^(\d{1,2}):(\d{2})$/);
     if (!timeMatch) {
-      await replyMessage(replyToken, '❌ 時間の形式が正しくありません\n例: 16:00', accessToken);
+      await replyMessage(replyToken, '❌ 時間の形式が正しくありません\n例: 16:00\n終了時間なしの場合は「なし」と入力', accessToken);
       return;
     }
 
@@ -584,13 +689,21 @@ async function handleDeleteExpenseConversation(
     const deleteUserName = data.deleteUserName!;
     const deleteDate = data.deleteDate!;
 
-    // ユーザー情報を取得（userIdを取得するため）
-    const displayName = await getUserDisplayName(groupId, userId, accessToken);
-    const user = await getOrCreateUser(userId, displayName, groupId);
+    // 削除対象のユーザー情報を取得（deleteUserNameから検索）
+    const targetUser = await getUserByDisplayName(deleteUserName);
+    if (!targetUser) {
+      await replyMessage(
+        replyToken,
+        `❌ ユーザー「${deleteUserName}」が見つかりませんでした`,
+        accessToken
+      );
+      await deleteConversationSession(userId);
+      return;
+    }
 
     // 支出を削除（deleteDateをDateオブジェクトに変換）
     const deleteDateObj = new Date(deleteDate);
-    const deletedExpense = await deleteExpenseByDateAndAmount(user.id, deleteDateObj, deleteAmount, deleteCategory);
+    const deletedExpense = await deleteExpenseByDateAndAmount(targetUser.id, deleteDateObj, deleteAmount, deleteCategory);
 
     if (!deletedExpense) {
       await replyMessage(
@@ -614,9 +727,9 @@ async function handleDeleteExpenseConversation(
 
     // 外食費用の場合は残高を戻す
     if (deletedExpense.category === '外食費用') {
-      const currentBalance = user.diningBalance;
+      const currentBalance = targetUser.diningBalance;
       const newBalance = currentBalance + deleteAmount;
-      await updateDiningBalance(user.id, newBalance);
+      await updateDiningBalance(targetUser.id, newBalance);
 
       const message = createDeleteMessage(
         deleteDate,

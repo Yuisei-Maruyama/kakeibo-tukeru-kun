@@ -169,6 +169,7 @@ export interface ConversationSession {
   data: {
     category?: Category;         // 選択されたカテゴリー
     payerName?: string;          // 支払い者名
+    payerUserId?: string;        // 支払い者ユーザーID（メンション時に使用）
     participantCount?: number;   // 予定参加人数
     userNames?: string[];        // ユーザー名リスト（複数人対応）
     userName?: string;           // ユーザー名（後方互換性のため残す）

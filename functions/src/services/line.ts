@@ -138,7 +138,10 @@ export function createHelpMessage(): string {
   message += `【情報表示】\n`;
   message += `@ヘルプ - このヘルプを表示\n`;
   message += `@残高 - 外食残高を表示\n`;
-  message += `@集計 - 今月の集計を表示\n`;
+  message += `@レポート - 集計レポートを表示\n`;
+  message += `  例: @レポート（現在期間）\n`;
+  message += `  例: @レポート 前半（1-15日）\n`;
+  message += `  例: @レポート 月末（16日-月末）\n`;
   message += `@履歴 - 直近10件の支出履歴\n\n`;
 
   message += `【操作】\n`;
@@ -157,6 +160,7 @@ export function createHelpMessage(): string {
   message += `  例: @予定 田中 会議 12/15 14:30 16:00（時間指定）\n`;
   message += `  例: @予定（引数なしで対話形式）\n`;
   message += `  ※ 日付を省略すると今日の日付になります\n`;
+  message += `  ※ 過去の日付は自動的に翌年になります\n`;
   message += `  ※ 時間を省略すると終日予定になります\n\n`;
 
   message += `@削除 {日付} {金額}\n`;
