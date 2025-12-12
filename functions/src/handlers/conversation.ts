@@ -8,6 +8,8 @@ import {
   saveExpense,
   updateDiningBalance,
   deleteExpenseByDateAndAmount,
+  getAllUsers,
+  updateSettings,
 } from '../services/firestore.js';
 import { createCalendarEvent, createScheduleEvent, deleteCalendarEvent } from '../services/calendar.js';
 import { replyMessage, createRegistrationMessage, getUserDisplayName, createDeleteMessage } from '../services/line.js';
@@ -120,6 +122,10 @@ export async function handleConversationInput(
       await handleAddScheduleConversation(session, input, replyToken, userId, groupId, accessToken, calendarId, mentions);
     } else if (session.type === 'delete_expense') {
       await handleDeleteExpenseConversation(session, input, replyToken, userId, groupId, accessToken, calendarId, mentions);
+    } else if (session.type === 'initial_setup') {
+      await handleInitialSetupConversation(session, input, replyToken, userId, accessToken);
+    } else if (session.type === 'change_settings') {
+      await handleChangeSettingsConversation(session, input, replyToken, userId, accessToken);
     }
   } catch (error) {
     console.error('Conversation input error:', error);
@@ -634,4 +640,148 @@ async function handleDeleteExpenseConversation(
 
     await deleteConversationSession(userId);
   }
+}
+
+/**
+ * @初期設定の対話モード開始
+ */
+export async function startInitialSetupConversation(
+  userId: string,
+  groupId: string,
+  replyToken: string,
+  accessToken: string
+): Promise<void> {
+  const session: ConversationSession = {
+    userId,
+    groupId,
+    type: 'initial_setup',
+    step: 'first_half_payer',
+    data: {},
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+  };
+
+  await saveConversationSession(session);
+
+  // ユーザーリストを取得
+  const users = await getAllUsers();
+  let message = `⚙️ 外食担当者を設定します\n\n`;
+  message += `月前半（1日〜15日）の外食担当者を選択してください\n\n`;
+
+  users.forEach((user, index) => {
+    message += `${index + 1}️⃣ ${user.displayName}\n`;
+  });
+
+  await replyMessage(replyToken, message, accessToken);
+}
+
+/**
+ * @設定変更の対話モード開始
+ */
+export async function startChangeSettingsConversation(
+  userId: string,
+  groupId: string,
+  replyToken: string,
+  accessToken: string
+): Promise<void> {
+  const session: ConversationSession = {
+    userId,
+    groupId,
+    type: 'change_settings',
+    step: 'first_half_payer',
+    data: {},
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+  };
+
+  await saveConversationSession(session);
+
+  // ユーザーリストを取得
+  const users = await getAllUsers();
+  let message = `🔄 外食担当者を変更します\n\n`;
+  message += `月前半（1日〜15日）の外食担当者を選択してください\n\n`;
+
+  users.forEach((user, index) => {
+    message += `${index + 1}️⃣ ${user.displayName}\n`;
+  });
+
+  await replyMessage(replyToken, message, accessToken);
+}
+
+/**
+ * @初期設定の対話処理
+ */
+async function handleInitialSetupConversation(
+  session: ConversationSession,
+  input: string,
+  replyToken: string,
+  userId: string,
+  accessToken: string
+): Promise<void> {
+  const { step, data } = session;
+
+  // ユーザーリストを取得
+  const users = await getAllUsers();
+
+  if (step === 'first_half_payer') {
+    // 前半担当者の選択
+    const selection = parseInt(input.trim(), 10);
+    if (isNaN(selection) || selection < 1 || selection > users.length) {
+      await replyMessage(replyToken, `❌ 1〜${users.length}の数字を入力してください`, accessToken);
+      return;
+    }
+
+    const selectedUser = users[selection - 1];
+    session.data.firstHalfPayerId = selectedUser.id;
+    session.step = 'second_half_payer';
+    await updateConversationSession(userId, { step: 'second_half_payer', data: session.data });
+
+    let message = `✅ 前半担当: ${selectedUser.displayName}\n\n`;
+    message += `月後半（16日〜月末）の外食担当者を選択してください\n\n`;
+
+    users.forEach((user, index) => {
+      message += `${index + 1}️⃣ ${user.displayName}\n`;
+    });
+
+    await replyMessage(replyToken, message, accessToken);
+  } else if (step === 'second_half_payer') {
+    // 後半担当者の選択
+    const selection = parseInt(input.trim(), 10);
+    if (isNaN(selection) || selection < 1 || selection > users.length) {
+      await replyMessage(replyToken, `❌ 1〜${users.length}の数字を入力してください`, accessToken);
+      return;
+    }
+
+    const selectedUser = users[selection - 1];
+    const firstHalfPayerId = data.firstHalfPayerId!;
+
+    // Firestoreの設定を更新
+    await updateSettings({
+      firstHalfPayerId,
+      secondHalfPayerId: selectedUser.id,
+    });
+
+    const firstHalfUser = users.find(u => u.id === firstHalfPayerId);
+
+    let message = `✅ 外食担当者を設定しました！\n\n`;
+    message += `📅 前半（1日〜15日）: ${firstHalfUser?.displayName}\n`;
+    message += `📅 後半（16日〜月末）: ${selectedUser.displayName}`;
+
+    await replyMessage(replyToken, message, accessToken);
+    await deleteConversationSession(userId);
+  }
+}
+
+/**
+ * @設定変更の対話処理
+ */
+async function handleChangeSettingsConversation(
+  session: ConversationSession,
+  input: string,
+  replyToken: string,
+  userId: string,
+  accessToken: string
+): Promise<void> {
+  // 初期設定と同じロジックを使用
+  await handleInitialSetupConversation(session, input, replyToken, userId, accessToken);
 }

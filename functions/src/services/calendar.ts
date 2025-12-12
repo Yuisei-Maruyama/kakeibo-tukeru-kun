@@ -331,3 +331,169 @@ export async function getTodaySchedules(
     return [];
   }
 }
+
+/**
+ * カレンダーイベントのタイトルから支出情報をパース
+ */
+export interface ParsedExpenseEvent {
+  category: '外食費用' | '買い物費用';
+  userName: string;
+  amount: number;
+  storeName: string;
+  eventId: string;
+  date: string; // YYYY-MM-DD
+}
+
+export function parseExpenseEventTitle(
+  event: calendar_v3.Schema$Event
+): ParsedExpenseEvent | null {
+  try {
+    const summary = event.summary || '';
+    const eventId = event.id || '';
+
+    // 柔軟なパースパターン
+    // パターン1: [カテゴリー] ユーザー名 ¥金額 (店舗名)
+    // パターン2: [カテゴリー] ユーザー名 金額 (店舗名)
+    // パターン3: [カテゴリー] ユーザー名 金額円 (店舗名)
+    // パターン4: カテゴリー ユーザー名 ¥金額 (店舗名)
+    // パターン5: カテゴリー ユーザー名 金額 (店舗名)
+    // パターン6: カテゴリー ユーザー名 金額円 (店舗名)
+    // カテゴリーは部分一致（外食、外食費、買い物、買物）
+    // 店舗名はすべてオプション
+
+    let category: '外食費用' | '買い物費用' | null = null;
+    let userName = '';
+    let amount = 0;
+    let storeName = '手動追加';
+
+    // カテゴリーを抽出（柔軟な部分一致）
+    // 外食費用: 外食、外食費を含む
+    // 買い物費用: 買い物、買物を含む
+    if (summary.includes('外食')) {
+      category = '外食費用';
+    } else if (summary.includes('買い物') || summary.includes('買物')) {
+      category = '買い物費用';
+    }
+
+    // カテゴリーが判定できない場合は完全一致を試みる
+    if (!category) {
+      const exactMatch = summary.match(/\[?(外食費用|買い物費用)\]?/);
+      if (exactMatch) {
+        category = exactMatch[1] as '外食費用' | '買い物費用';
+      } else {
+        console.warn(`No category found in event: ${summary}`);
+        return null;
+      }
+    }
+
+    // カテゴリー文字列を除去（様々なパターンに対応）
+    let afterCategory = summary;
+
+    // まず完全一致で除去を試みる
+    afterCategory = afterCategory.replace(/\[?(外食費用|買い物費用)\]?\s*/, '');
+
+    // 部分一致のキーワードを除去
+    if (category === '外食費用') {
+      afterCategory = afterCategory
+        .replace(/\[?外食費?\]?\s*/, '');
+    } else if (category === '買い物費用') {
+      afterCategory = afterCategory
+        .replace(/\[?買い?物\]?\s*/, '');
+    }
+
+    afterCategory = afterCategory.trim();
+
+    // 金額を抽出（¥付き・なし、円付き・なし、カンマ付きも対応）
+    const amountMatch = afterCategory.match(/[¥￥]?\s*([\d,，]+)\s*円?/);
+    if (!amountMatch) {
+      console.warn(`No amount found in event: ${summary}`);
+      return null;
+    }
+
+    const amountStr = amountMatch[1].replace(/[,，]/g, ''); // カンマを除去
+    amount = parseInt(amountStr, 10);
+
+    if (isNaN(amount) || amount <= 0) {
+      console.warn(`Invalid amount in event: ${summary}`);
+      return null;
+    }
+
+    // 店舗名を抽出（()付きの場合）
+    const storeMatch = afterCategory.match(/\((.+?)\)/);
+    if (storeMatch) {
+      storeName = storeMatch[1].trim();
+    }
+
+    // ユーザー名を抽出（金額と店舗名を除いた部分）
+    let userNamePart = afterCategory
+      .replace(/[¥￥]?\s*[\d,，]+\s*円?/, '') // 金額を除去（円付きも対応）
+      .replace(/\(.+?\)/, '') // 店舗名を除去
+      .trim();
+
+    // 残った文字列がユーザー名
+    if (userNamePart.length === 0) {
+      console.warn(`No user name found in event: ${summary}`);
+      return null;
+    }
+
+    userName = userNamePart;
+
+    // イベントの日付を取得
+    let dateStr = '';
+    if (event.start?.date) {
+      // 終日イベント
+      dateStr = event.start.date;
+    } else if (event.start?.dateTime) {
+      // 時刻指定イベント
+      dateStr = new Date(event.start.dateTime).toISOString().split('T')[0];
+    } else {
+      console.warn(`No date found in event: ${summary}`);
+      return null;
+    }
+
+    return {
+      category,
+      userName,
+      amount,
+      storeName,
+      eventId,
+      date: dateStr,
+    };
+  } catch (error) {
+    console.error('Failed to parse expense event:', error);
+    return null;
+  }
+}
+
+/**
+ * 当月の支出イベントを取得（外食費用・買い物費用）
+ */
+export async function getMonthlyExpenseEvents(
+  calendarId: string,
+  year: number,
+  month: number // 1-12
+): Promise<ParsedExpenseEvent[]> {
+  try {
+    // 当月の開始日・終了日を計算
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+
+    // カレンダーイベントを取得
+    const events = await getCalendarEvents(calendarId, startDate, endDate);
+
+    // タイトルをパースして支出情報を抽出
+    const parsedEvents: ParsedExpenseEvent[] = [];
+    for (const event of events) {
+      const parsed = parseExpenseEventTitle(event);
+      if (parsed) {
+        parsedEvents.push(parsed);
+      }
+    }
+
+    console.log(`Found ${parsedEvents.length} expense events for ${year}/${month}`);
+    return parsedEvents;
+  } catch (error) {
+    console.error('Failed to get monthly expense events:', error);
+    throw error;
+  }
+}

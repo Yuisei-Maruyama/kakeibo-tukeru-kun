@@ -9,7 +9,7 @@ import { analyzeReceiptImage } from '../services/gemini.js';
 import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession } from '../services/firestore.js';
 import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '../services/calendar.js';
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, getUserDisplayName } from '../services/line.js';
-import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, handleConversationInput } from './conversation.js';
+import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput } from './conversation.js';
 
 /**
  * 署名検証
@@ -283,6 +283,14 @@ async function handleTextMessage(
         // 引数あり → 通常処理
         await handleScheduleCommand(replyToken, userId, groupId, args, accessToken, calendarId, mentions);
       }
+    }
+    // @初期設定コマンド
+    else if (command === '初期設定') {
+      await startInitialSetupConversation(userId, groupId, replyToken, accessToken);
+    }
+    // @設定変更コマンド
+    else if (command === '設定変更') {
+      await startChangeSettingsConversation(userId, groupId, replyToken, accessToken);
     }
     // @キャンセルコマンド
     else if (command === 'キャンセル') {

@@ -165,7 +165,9 @@ export function createHelpMessage(): string {
 
   message += `【設定】\n`;
   message += `@予算 {金額} - 月額予算を変更\n`;
-  message += `  例: @予算 60000`;
+  message += `  例: @予算 60000\n`;
+  message += `@初期設定 - 外食担当者を設定（対話形式）\n`;
+  message += `@設定変更 - 外食担当者を変更（対話形式）`;
 
   return message;
 }

@@ -357,3 +357,76 @@ export async function updateConversationSession(
   await db.collection('conversations').doc(userId).update(updates);
   console.log(`Conversation session updated for user: ${userId}`);
 }
+
+/**
+ * カレンダーイベントIDで支出が存在するかチェック
+ */
+export async function expenseExistsByCalendarEventId(
+  calendarEventId: string
+): Promise<boolean> {
+  const db = getFirestore();
+  const snapshot = await db
+    .collection('expenses')
+    .where('calendarEventId', '==', calendarEventId)
+    .limit(1)
+    .get();
+
+  return !snapshot.empty;
+}
+
+/**
+ * ユーザー名から対応するユーザーIDを取得
+ * 完全一致で見つからない場合は、あいまい検索（部分一致）を試みる
+ */
+export async function getUserIdByDisplayName(
+  displayName: string
+): Promise<string | null> {
+  const db = getFirestore();
+
+  // まず完全一致を試みる
+  const exactSnapshot = await db
+    .collection('users')
+    .where('displayName', '==', displayName)
+    .limit(1)
+    .get();
+
+  if (!exactSnapshot.empty) {
+    return exactSnapshot.docs[0].id;
+  }
+
+  // 完全一致がない場合は、あいまい検索
+  // 全ユーザーを取得して部分一致を確認
+  const allUsersSnapshot = await db.collection('users').get();
+
+  if (allUsersSnapshot.empty) {
+    return null;
+  }
+
+  const users = allUsersSnapshot.docs.map(doc => ({
+    id: doc.id,
+    displayName: doc.data().displayName as string,
+  }));
+
+  // 入力されたユーザー名を正規化（空白除去、小文字化）
+  const normalizedInput = displayName.replace(/\s+/g, '').toLowerCase();
+
+  // あいまいマッチング: 部分一致または含む関係
+  for (const user of users) {
+    const normalizedUserName = user.displayName.replace(/\s+/g, '').toLowerCase();
+
+    // パターン1: 入力が登録名に含まれる（例: 入力「田中」→ 登録「田中太郎」）
+    if (normalizedUserName.includes(normalizedInput)) {
+      console.log(`Fuzzy match found: input="${displayName}" matched "${user.displayName}"`);
+      return user.id;
+    }
+
+    // パターン2: 登録名が入力に含まれる（例: 入力「田中太郎さん」→ 登録「田中」）
+    if (normalizedInput.includes(normalizedUserName)) {
+      console.log(`Fuzzy match found: input="${displayName}" matched "${user.displayName}"`);
+      return user.id;
+    }
+  }
+
+  console.warn(`No user found for: ${displayName}`);
+  return null;
+}

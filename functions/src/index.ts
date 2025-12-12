@@ -1,6 +1,6 @@
 import { HttpFunction } from '@google-cloud/functions-framework';
 import { handleWebhook } from './handlers/webhook.js';
-import { handleScheduledReport, handleDailyScheduleNotification } from './handlers/scheduler.js';
+import { handleScheduledReport, handleDailyScheduleNotification, handleCalendarSync } from './handlers/scheduler.js';
 
 /**
  * LINE Webhook Handler
@@ -24,4 +24,12 @@ export const scheduledReport: HttpFunction = async (req, res) => {
  */
 export const dailyScheduleNotification: HttpFunction = async (req, res) => {
   await handleDailyScheduleNotification(req, res);
+};
+
+/**
+ * Calendar Sync Handler
+ * Cloud Scheduler から呼び出され、毎日深夜3:00にGoogleカレンダーの支出イベントをFirestoreに同期
+ */
+export const calendarSync: HttpFunction = async (req, res) => {
+  await handleCalendarSync(req, res);
 };

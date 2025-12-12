@@ -136,7 +136,7 @@ export interface CalendarEventParams {
 /**
  * 対話セッションの種別
  */
-export type ConversationType = 'add_expense' | 'add_schedule' | 'delete_expense';
+export type ConversationType = 'add_expense' | 'add_schedule' | 'delete_expense' | 'initial_setup' | 'change_settings';
 
 /**
  * 対話セッションの状態
@@ -154,7 +154,9 @@ export type ConversationStep =
   | 'schedule_content'  // 予定内容入力（@予定のみ）
   | 'date'              // 日付入力（共通）
   | 'start_time'        // 開始時間入力（@予定のみ）
-  | 'end_time';         // 終了時間入力（@予定のみ）
+  | 'end_time'          // 終了時間入力（@予定のみ）
+  | 'first_half_payer'  // 前半担当者選択（@初期設定・@設定変更）
+  | 'second_half_payer';// 後半担当者選択（@初期設定・@設定変更）
 
 /**
  * 対話セッション情報
@@ -179,6 +181,8 @@ export interface ConversationSession {
     deleteUserName?: string;     // 削除対象ユーザー名
     deleteDate?: string;         // 削除対象日付（YYYY-MM-DD形式）
     deleteAmount?: number;       // 削除対象金額
+    firstHalfPayerId?: string;   // 前半担当者ID（@初期設定・@設定変更）
+    secondHalfPayerId?: string;  // 後半担当者ID（@初期設定・@設定変更）
   };
   createdAt: Timestamp;          // 作成日時
   expiresAt: Timestamp;          // 有効期限（10分後）

@@ -1,7 +1,8 @@
 import { Request, Response } from '@google-cloud/functions-framework';
-import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances } from '../services/firestore.js';
+import { Timestamp } from '@google-cloud/firestore';
+import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, expenseExistsByCalendarEventId, getUserIdByDisplayName, saveExpense, updateDiningBalance, getUser } from '../services/firestore.js';
 import { pushMessage, createReportMessage } from '../services/line.js';
-import { getTodaySchedules } from '../services/calendar.js';
+import { getTodaySchedules, getMonthlyExpenseEvents } from '../services/calendar.js';
 import { ReportData, ReportType, UserExpenses, MonthlySummary } from '../types/index.js';
 
 /**
@@ -311,4 +312,98 @@ function formatDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+/**
+ * Googleカレンダー同期ハンドラー
+ * Googleカレンダーの当月の支出イベントをFirestoreに同期
+ */
+export async function handleCalendarSync(_req: Request, res: Response): Promise<void> {
+  try {
+    const calendarId = process.env.GOOGLE_CALENDAR_ID || '';
+
+    if (!calendarId) {
+      console.error('GOOGLE_CALENDAR_ID not set');
+      res.status(500).json({ error: 'Calendar ID not configured' });
+      return;
+    }
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1; // 1-12
+
+    console.log(`Starting calendar sync for ${year}/${month}`);
+
+    // Googleカレンダーから当月の支出イベントを取得
+    const expenseEvents = await getMonthlyExpenseEvents(calendarId, year, month);
+
+    let syncedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
+
+    // 各イベントをFirestoreに同期
+    for (const event of expenseEvents) {
+      try {
+        // カレンダーイベントIDで既存チェック
+        const exists = await expenseExistsByCalendarEventId(event.eventId);
+        if (exists) {
+          console.log(`Event already exists: ${event.eventId}`);
+          skippedCount++;
+          continue;
+        }
+
+        // ユーザー名からユーザーIDを取得
+        const userId = await getUserIdByDisplayName(event.userName);
+        if (!userId) {
+          console.warn(`User not found: ${event.userName}`);
+          errorCount++;
+          continue;
+        }
+
+        // Firestoreに保存
+        await saveExpense({
+          userId,
+          userName: event.userName,
+          amount: event.amount,
+          category: event.category,
+          storeName: event.storeName,
+          date: Timestamp.fromDate(new Date(event.date)),
+          calendarEventId: event.eventId,
+        });
+
+        // 外食費用の場合は残高を更新
+        if (event.category === '外食費用') {
+          const user = await getUser(userId);
+          if (user) {
+            const newBalance = user.diningBalance - event.amount;
+            await updateDiningBalance(userId, newBalance);
+            console.log(`Updated dining balance for ${event.userName}: ${newBalance}`);
+          }
+        }
+
+        console.log(`Synced event: ${event.eventId} - ${event.userName} ¥${event.amount}`);
+        syncedCount++;
+      } catch (error) {
+        console.error(`Failed to sync event ${event.eventId}:`, error);
+        errorCount++;
+      }
+    }
+
+    console.log(`Calendar sync completed: ${syncedCount} synced, ${skippedCount} skipped, ${errorCount} errors`);
+
+    res.status(200).json({
+      status: 'ok',
+      synced: syncedCount,
+      skipped: skippedCount,
+      errors: errorCount,
+      total: expenseEvents.length,
+    });
+  } catch (error) {
+    console.error('Calendar sync error:', error);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    res.status(500).json({
+      error: 'Internal server error',
+      details: errorMsg,
+    });
+  }
 }
