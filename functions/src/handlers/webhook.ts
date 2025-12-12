@@ -2,14 +2,52 @@ import { Request, Response } from '@google-cloud/functions-framework';
 import { WebhookEvent, MessageEvent, TextEventMessage, ImageEventMessage } from '@line/bot-sdk';
 import { Timestamp } from '@google-cloud/firestore';
 import * as crypto from 'crypto';
-import { Category, ConversationSession } from '../types/index.js';
+import { Category, ConversationSession, ReportType } from '../types/index.js';
 
 // Services
 import { analyzeReceiptImage } from '../services/gemini.js';
 import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession } from '../services/firestore.js';
 import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '../services/calendar.js';
-import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, getUserDisplayName } from '../services/line.js';
+import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
 import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, handleConversationInput } from './conversation.js';
+import { generateReportData, getReportPeriod } from './scheduler.js';
+
+/**
+ * 日付文字列（M/D形式）をパースして未来の日付を返す
+ * 過去の日付になる場合は翌年に調整
+ */
+function parseFutureDate(input: string): Date | null {
+  const dateParts = input.split('/');
+  if (dateParts.length !== 2) {
+    return null;
+  }
+
+  const month = parseInt(dateParts[0], 10);
+  const day = parseInt(dateParts[1], 10);
+
+  if (isNaN(month) || isNaN(day) || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let year = now.getFullYear();
+
+  let date = new Date(year, month - 1, day);
+
+  // 過去の日付の場合は翌年に調整
+  if (date < today) {
+    year++;
+    date = new Date(year, month - 1, day);
+  }
+
+  // 日付が有効かチェック（例: 2/30 は無効）
+  if (isNaN(date.getTime()) || date.getMonth() !== month - 1) {
+    return null;
+  }
+
+  return date;
+}
 
 /**
  * 署名検証
@@ -34,9 +72,16 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     const calendarId = process.env.GOOGLE_CALENDAR_ID || '';
 
     // 署名検証
+    // Cloud Functions v2 では rawBody が利用可能
+    // rawBody がない場合は JSON.stringify を使用（フォールバック）
     const signature = req.headers['x-line-signature'] as string;
-    if (!signature || !validateSignature(JSON.stringify(req.body), signature, channelSecret)) {
-      console.error('Invalid signature');
+    const rawBody = (req as any).rawBody ? (req as any).rawBody.toString('utf8') : JSON.stringify(req.body);
+    if (!signature || !validateSignature(rawBody, signature, channelSecret)) {
+      console.error('401 Unauthorized: Invalid signature', {
+        hasSignature: !!signature,
+        hasRawBody: !!(req as any).rawBody,
+        bodyPreview: rawBody.substring(0, 100)
+      });
       res.status(401).send('Unauthorized');
       return;
     }
@@ -251,6 +296,11 @@ async function handleTextMessage(
     else if (command === '履歴') {
       await handleHistoryCommand(replyToken, accessToken);
     }
+    // @レポートコマンド
+    else if (command === 'レポート' || command.startsWith('レポート ')) {
+      const args = command.replace('レポート', '').trim();
+      await handleReportCommand(replyToken, args, accessToken);
+    }
     // @削除コマンド
     else if (command.startsWith('削除')) {
       const args = command.replace('削除', '').trim();
@@ -352,6 +402,50 @@ async function handleHistoryCommand(replyToken: string, accessToken: string): Pr
 
   const message = createHistoryMessage(historyData);
   await replyMessage(replyToken, message, accessToken);
+}
+
+/**
+ * レポートコマンド処理
+ */
+async function handleReportCommand(
+  replyToken: string,
+  args: string,
+  accessToken: string
+): Promise<void> {
+  try {
+    const now = new Date();
+    const day = now.getDate();
+
+    // 引数でレポートタイプを指定可能（デフォルトは現在の日付に基づく）
+    let reportType: ReportType;
+    if (args === '前半' || args === 'mid') {
+      reportType = 'mid-month';
+    } else if (args === '後半' || args === '月末' || args === 'end') {
+      reportType = 'end-month';
+    } else {
+      // 引数なしの場合は現在の日付に基づいて決定
+      reportType = day <= 15 ? 'mid-month' : 'end-month';
+    }
+
+    // レポート期間を取得
+    const period = getReportPeriod(now, reportType);
+
+    // レポートデータを生成
+    const reportData = await generateReportData(period.start, period.end, reportType);
+
+    // レポートメッセージを生成
+    const message = createReportMessage(reportData);
+
+    await replyMessage(replyToken, message, accessToken);
+  } catch (error) {
+    console.error('Report command error:', error);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    await replyMessage(
+      replyToken,
+      `❌ レポート生成に失敗しました\n\n詳細: ${errorMsg}`,
+      accessToken
+    );
+  }
 }
 
 /**
@@ -660,26 +754,12 @@ async function handleScheduleCommand(
       userName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
     }
 
-    // 日付をパース
+    // 日付をパース（予定は未来の日付のみ許可）
     let scheduleDate: Date;
     if (dateInput) {
       // 日付が指定された場合（例: "12/15"）
-      const dateParts = dateInput.split('/');
-      if (dateParts.length === 2) {
-        const month = parseInt(dateParts[0], 10);
-        const day = parseInt(dateParts[1], 10);
-        const year = new Date().getFullYear();
-        scheduleDate = new Date(year, month - 1, day);
-
-        if (isNaN(scheduleDate.getTime())) {
-          await replyMessage(
-            replyToken,
-            '❌ 日付の形式が正しくありません\n例: @予定 田中 会議 12/15',
-            accessToken
-          );
-          return;
-        }
-      } else {
+      const parsedDate = parseFutureDate(dateInput);
+      if (!parsedDate) {
         await replyMessage(
           replyToken,
           '❌ 日付の形式が正しくありません\n例: @予定 田中 会議 12/15',
@@ -687,6 +767,7 @@ async function handleScheduleCommand(
         );
         return;
       }
+      scheduleDate = parsedDate;
     } else {
       scheduleDate = new Date();
     }

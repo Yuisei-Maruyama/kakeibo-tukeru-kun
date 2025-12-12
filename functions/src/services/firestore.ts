@@ -72,6 +72,24 @@ export async function getAllUsers(): Promise<User[]> {
 }
 
 /**
+ * 表示名でユーザーを検索
+ */
+export async function getUserByDisplayName(displayName: string): Promise<User | null> {
+  const db = getFirestore();
+  const usersSnapshot = await db.collection('users')
+    .where('displayName', '==', displayName)
+    .where('isActive', '==', true)
+    .limit(1)
+    .get();
+
+  if (usersSnapshot.empty) {
+    return null;
+  }
+
+  return usersSnapshot.docs[0].data() as User;
+}
+
+/**
  * ユーザーの外食残高を更新
  */
 export async function updateDiningBalance(userId: string, newBalance: number): Promise<void> {

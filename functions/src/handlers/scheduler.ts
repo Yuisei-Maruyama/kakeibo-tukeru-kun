@@ -21,6 +21,13 @@ export async function handleScheduledReport(req: Request, res: Response): Promis
     const reportType: ReportType = req.body?.reportType || 'mid-month';
     const now = new Date();
 
+    // 月末レポートは月末の最終日のみ実行（28-31日スケジュールからの呼び出し対応）
+    if (reportType === 'end-month' && !isLastDayOfMonth(now)) {
+      console.log('Skipping end-month report: not the last day of month');
+      res.status(200).json({ status: 'skipped', reason: 'Not the last day of month' });
+      return;
+    }
+
     // レポート期間を決定
     const period = getReportPeriod(now, reportType);
 
@@ -56,7 +63,7 @@ export async function handleScheduledReport(req: Request, res: Response): Promis
 /**
  * レポート期間を取得
  */
-function getReportPeriod(date: Date, reportType: ReportType): { start: Date; end: Date } {
+export function getReportPeriod(date: Date, reportType: ReportType): { start: Date; end: Date } {
   const year = date.getFullYear();
   const month = date.getMonth();
 
@@ -87,7 +94,7 @@ function isLastDayOfMonth(date: Date): boolean {
 /**
  * レポートデータを生成
  */
-async function generateReportData(
+export async function generateReportData(
   startDate: Date,
   endDate: Date,
   reportType: ReportType
