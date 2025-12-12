@@ -231,19 +231,42 @@ export async function handleDailyScheduleNotification(_req: Request, res: Respon
   try {
     const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
     const calendarId = process.env.GOOGLE_CALENDAR_ID || '';
+
+    console.log('Daily schedule notification started');
+    console.log('Environment variables check:', {
+      hasAccessToken: !!accessToken,
+      hasCalendarId: !!calendarId,
+      calendarIdPrefix: calendarId ? calendarId.substring(0, 10) + '...' : 'undefined'
+    });
+
     const settings = await getSettings();
+    console.log('Settings retrieved:', {
+      hasSettings: !!settings,
+      hasLineGroupId: !!(settings?.lineGroupId),
+      lineGroupIdPrefix: settings?.lineGroupId ? settings.lineGroupId.substring(0, 10) + '...' : 'undefined'
+    });
 
     if (!settings || !settings.lineGroupId) {
-      console.error('Settings not found or lineGroupId not set');
-      res.status(500).json({ error: 'Settings not configured' });
+      const errorMsg = 'Settings not found or lineGroupId not set';
+      console.error(errorMsg, {
+        settings: settings ? 'exists' : 'null',
+        lineGroupId: settings?.lineGroupId || 'not set'
+      });
+      res.status(500).json({
+        error: 'Settings not configured',
+        details: errorMsg
+      });
       return;
     }
 
     const today = new Date();
+    console.log('Fetching schedules for:', today.toISOString());
+
     const schedules = await getTodaySchedules(calendarId, today);
+    console.log(`Found ${schedules.length} schedules for today`);
 
     if (schedules.length === 0) {
-      console.log('No schedules for today');
+      console.log('No schedules for today - skipping notification');
       res.status(200).json({ status: 'ok', message: 'No schedules' });
       return;
     }
@@ -255,14 +278,28 @@ export async function handleDailyScheduleNotification(_req: Request, res: Respon
       message += `   📝 ${schedule.content}\n\n`;
     });
 
+    console.log('Sending notification to LINE group');
     // LINEグループに送信
     await pushMessage(settings.lineGroupId, message, accessToken);
 
-    console.log('Daily schedule notification sent');
-    res.status(200).json({ status: 'ok', schedules: schedules.length });
+    console.log('Daily schedule notification sent successfully');
+    res.status(200).json({
+      status: 'ok',
+      schedules: schedules.length,
+      date: today.toISOString()
+    });
   } catch (error) {
     console.error('Daily schedule notification error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    const errorStack = error instanceof Error ? error.stack : '';
+    console.error('Error details:', {
+      message: errorMsg,
+      stack: errorStack?.substring(0, 500)
+    });
+    res.status(500).json({
+      error: 'Internal server error',
+      details: errorMsg
+    });
   }
 }
 

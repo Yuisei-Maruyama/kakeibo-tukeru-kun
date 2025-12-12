@@ -132,3 +132,54 @@ export interface CalendarEventParams {
   date: string;                  // YYYY-MM-DD
   colorId: string;
 }
+
+/**
+ * 対話セッションの種別
+ */
+export type ConversationType = 'add_expense' | 'add_schedule' | 'delete_expense';
+
+/**
+ * 対話セッションの状態
+ */
+export type ConversationStep =
+  | 'category'          // カテゴリー選択（@追加のみ）
+  | 'payer_name'        // 支払い者名入力（@追加）
+  | 'participant_count' // 参加人数入力（@予定のみ）
+  | 'user_name'         // ユーザー名入力（@予定）
+  | 'delete_category'   // 削除対象カテゴリー選択（@削除のみ）
+  | 'delete_user_name'  // 削除対象ユーザー名入力（@削除のみ）
+  | 'delete_date'       // 削除対象日付入力（@削除のみ）
+  | 'delete_amount'     // 削除対象金額入力（@削除のみ）
+  | 'amount'            // 金額入力（@追加のみ）
+  | 'schedule_content'  // 予定内容入力（@予定のみ）
+  | 'date'              // 日付入力（共通）
+  | 'start_time'        // 開始時間入力（@予定のみ）
+  | 'end_time';         // 終了時間入力（@予定のみ）
+
+/**
+ * 対話セッション情報
+ */
+export interface ConversationSession {
+  userId: string;                // ユーザーID
+  groupId: string;               // グループID
+  type: ConversationType;        // 対話の種類
+  step: ConversationStep;        // 現在のステップ
+  data: {
+    category?: Category;         // 選択されたカテゴリー
+    payerName?: string;          // 支払い者名
+    participantCount?: number;   // 予定参加人数
+    userNames?: string[];        // ユーザー名リスト（複数人対応）
+    userName?: string;           // ユーザー名（後方互換性のため残す）
+    amount?: number;             // 金額
+    scheduleContent?: string;    // 予定内容
+    scheduleDate?: string;       // 予定日付（YYYY-MM-DD形式）
+    scheduleStartTime?: string;  // 予定開始時間（HH:mm形式、オプション）
+    scheduleEndTime?: string;    // 予定終了時間（HH:mm形式、オプション）
+    deleteCategory?: Category;   // 削除対象カテゴリー
+    deleteUserName?: string;     // 削除対象ユーザー名
+    deleteDate?: string;         // 削除対象日付（YYYY-MM-DD形式）
+    deleteAmount?: number;       // 削除対象金額
+  };
+  createdAt: Timestamp;          // 作成日時
+  expiresAt: Timestamp;          // 有効期限（10分後）
+}

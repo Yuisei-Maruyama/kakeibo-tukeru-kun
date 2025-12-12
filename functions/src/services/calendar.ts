@@ -140,7 +140,9 @@ export async function createScheduleEvent(
   calendarId: string,
   userName: string,
   scheduleContent: string,
-  date: string
+  date: string,
+  startTime?: string,
+  endTime?: string
 ): Promise<string> {
   try {
     const calendar = getCalendarClient();
@@ -148,17 +150,60 @@ export async function createScheduleEvent(
     const summary = `[予定] ${userName} - ${scheduleContent}`;
     const description = `予定: ${scheduleContent}\n担当: ${userName}\n登録元: LINE家計簿Bot`;
 
-    const event: calendar_v3.Schema$Event = {
-      summary,
-      description,
-      start: {
-        date,
-      },
-      end: {
-        date,
-      },
-      colorId: getColorId('予定'),
-    };
+    let event: calendar_v3.Schema$Event;
+
+    if (startTime && endTime) {
+      // 開始時間と終了時間が両方指定されている場合
+      const startDateTime = `${date}T${startTime}:00+09:00`;
+      const endDateTime = `${date}T${endTime}:00+09:00`;
+
+      event = {
+        summary,
+        description,
+        start: {
+          dateTime: startDateTime,
+          timeZone: 'Asia/Tokyo',
+        },
+        end: {
+          dateTime: endDateTime,
+          timeZone: 'Asia/Tokyo',
+        },
+        colorId: getColorId('予定'),
+      };
+    } else if (startTime && !endTime) {
+      // 開始時間のみ指定の場合は1時間後を終了時間とする
+      const startDateTime = `${date}T${startTime}:00+09:00`;
+      const startDate = new Date(startDateTime);
+      const endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+      const endDateTime = endDate.toISOString().replace(/\.\d{3}Z$/, '+09:00');
+
+      event = {
+        summary,
+        description,
+        start: {
+          dateTime: startDateTime,
+          timeZone: 'Asia/Tokyo',
+        },
+        end: {
+          dateTime: endDateTime,
+          timeZone: 'Asia/Tokyo',
+        },
+        colorId: getColorId('予定'),
+      };
+    } else {
+      // 時間指定がない場合は終日イベント
+      event = {
+        summary,
+        description,
+        start: {
+          date,
+        },
+        end: {
+          date,
+        },
+        colorId: getColorId('予定'),
+      };
+    }
 
     const response = await calendar.events.insert({
       calendarId,

@@ -1,5 +1,5 @@
 import { Firestore, Timestamp } from '@google-cloud/firestore';
-import { User, Expense, Settings, Category } from '../types/index.js';
+import { User, Expense, Settings, Category, ConversationSession } from '../types/index.js';
 
 /**
  * Firestoreクライアント
@@ -218,7 +218,8 @@ export async function deleteExpensesByDate(
 export async function deleteExpenseByDateAndAmount(
   userId: string,
   date: Date,
-  amount: number
+  amount: number,
+  category: Category
 ): Promise<Expense | null> {
   const db = getFirestore();
   const startOfDay = new Date(date);
@@ -226,24 +227,32 @@ export async function deleteExpenseByDateAndAmount(
   const endOfDay = new Date(date);
   endOfDay.setHours(23, 59, 59, 999);
 
+  // インデックス不要なクエリ: userIdとcategoryだけでフィルタ
   const snapshot = await db
     .collection('expenses')
     .where('userId', '==', userId)
-    .where('date', '>=', Timestamp.fromDate(startOfDay))
-    .where('date', '<=', Timestamp.fromDate(endOfDay))
-    .where('amount', '==', amount)
-    .limit(1)
+    .where('category', '==', category)
     .get();
 
-  if (snapshot.empty) {
+  // JavaScriptで日付と金額をフィルタ
+  const matchingDocs = snapshot.docs.filter(doc => {
+    const expense = doc.data() as Expense;
+    const expenseDate = expense.date.toDate();
+    return expenseDate >= startOfDay &&
+           expenseDate <= endOfDay &&
+           expense.amount === amount;
+  });
+
+  if (matchingDocs.length === 0) {
     return null;
   }
 
-  const doc = snapshot.docs[0];
+  // 最初にマッチしたものを削除
+  const doc = matchingDocs[0];
   const expense = doc.data() as Expense;
   await doc.ref.delete();
 
-  console.log(`Deleted expense: ${expense.id} (${userId}, ${date.toISOString()}, ${amount})`);
+  console.log(`Deleted expense: ${expense.id} (${userId}, ${date.toISOString()}, ${amount}, ${category})`);
   return expense;
 }
 
@@ -290,4 +299,61 @@ export async function initializeLineGroupId(lineGroupId: string): Promise<void> 
     );
     console.log(`LINE Group ID initialized: ${lineGroupId}`);
   }
+}
+
+/**
+ * 対話セッションを保存
+ */
+export async function saveConversationSession(session: ConversationSession): Promise<void> {
+  const db = getFirestore();
+  await db.collection('conversations').doc(session.userId).set({
+    ...session,
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000), // 10分後
+  });
+  console.log(`Conversation session saved for user: ${session.userId}`);
+}
+
+/**
+ * 対話セッションを取得
+ */
+export async function getConversationSession(userId: string): Promise<ConversationSession | null> {
+  const db = getFirestore();
+  const doc = await db.collection('conversations').doc(userId).get();
+
+  if (!doc.exists) {
+    return null;
+  }
+
+  const session = doc.data() as ConversationSession;
+
+  // 有効期限チェック
+  if (session.expiresAt.toMillis() < Date.now()) {
+    // 期限切れの場合は削除
+    await deleteConversationSession(userId);
+    return null;
+  }
+
+  return session;
+}
+
+/**
+ * 対話セッションを削除
+ */
+export async function deleteConversationSession(userId: string): Promise<void> {
+  const db = getFirestore();
+  await db.collection('conversations').doc(userId).delete();
+  console.log(`Conversation session deleted for user: ${userId}`);
+}
+
+/**
+ * 対話セッションを更新
+ */
+export async function updateConversationSession(
+  userId: string,
+  updates: Partial<ConversationSession>
+): Promise<void> {
+  const db = getFirestore();
+  await db.collection('conversations').doc(userId).update(updates);
+  console.log(`Conversation session updated for user: ${userId}`);
 }

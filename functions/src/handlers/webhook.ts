@@ -2,12 +2,14 @@ import { Request, Response } from '@google-cloud/functions-framework';
 import { WebhookEvent, MessageEvent, TextEventMessage, ImageEventMessage } from '@line/bot-sdk';
 import { Timestamp } from '@google-cloud/firestore';
 import * as crypto from 'crypto';
+import { Category, ConversationSession } from '../types/index.js';
 
 // Services
 import { analyzeReceiptImage } from '../services/gemini.js';
-import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses } from '../services/firestore.js';
+import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession } from '../services/firestore.js';
 import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '../services/calendar.js';
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, getUserDisplayName } from '../services/line.js';
+import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, handleConversationInput } from './conversation.js';
 
 /**
  * 署名検証
@@ -81,6 +83,13 @@ async function handleMessageEvent(
 
   const groupId = source.groupId;
   const userId = source.userId || '';
+
+  // グループIDを初期化（初回のみ）
+  try {
+    await initializeLineGroupId(groupId);
+  } catch (error) {
+    console.error('Failed to initialize LINE group ID:', error);
+  }
 
   // 画像メッセージの処理
   if (message.type === 'image') {
@@ -189,6 +198,26 @@ async function handleTextMessage(
 ): Promise<void> {
   const text = message.text.trim();
 
+  // メンション情報を取得（LINEのメンション機能を使用している場合）
+  const mentions = (message as any).mention?.mentionees || [];
+
+  // 対話セッションが存在する場合は、対話処理を優先
+  const session = await getConversationSession(userId);
+  if (session) {
+    // 対話セッション中は、@キャンセル（全角・半角）以外はすべて対話の入力として扱う
+    const isCancel = text === '@キャンセル' || text === '＠キャンセル';
+
+    if (isCancel) {
+      await deleteConversationSession(userId);
+      await replyMessage(replyToken, '❌ 入力をキャンセルしました', accessToken);
+      return;
+    }
+
+    // @キャンセル以外はすべて対話の入力として処理
+    await handleConversationInput(session, text, replyToken, userId, groupId, accessToken, calendarId, mentions);
+    return;
+  }
+
   // コマンドでない場合は無視（全角・半角の@に対応）
   if (!text.startsWith('@') && !text.startsWith('＠')) {
     return;
@@ -198,9 +227,6 @@ async function handleTextMessage(
     // 全角・半角スペースを統一（全て半角スペースに変換）
     const normalizedText = text.slice(1).trim().replace(/　/g, ' ');
     const command = normalizedText;
-
-    // メンション情報を取得（LINEのメンション機能を使用している場合）
-    const mentions = (message as any).mention?.mentionees || [];
 
     // @ヘルプコマンド
     if (command === 'ヘルプ') {
@@ -226,19 +252,42 @@ async function handleTextMessage(
       await handleHistoryCommand(replyToken, accessToken);
     }
     // @削除コマンド
-    else if (command.startsWith('削除 ')) {
-      const args = command.replace('削除 ', '').trim();
-      await handleDeleteCommand(replyToken, userId, args, accessToken, calendarId);
+    else if (command.startsWith('削除')) {
+      const args = command.replace('削除', '').trim();
+      if (args.length === 0) {
+        // 引数なし → 対話モード開始
+        await startDeleteExpenseConversation(userId, groupId, replyToken, accessToken);
+      } else {
+        // 引数あり → 通常処理
+        await handleDeleteCommand(replyToken, userId, args, accessToken, calendarId);
+      }
     }
     // @追加コマンド
-    else if (command.startsWith('追加 ')) {
-      const args = command.replace('追加 ', '').trim();
-      await handleAddCommand(replyToken, userId, groupId, args, accessToken, calendarId, mentions);
+    else if (command.startsWith('追加')) {
+      const args = command.replace('追加', '').trim();
+      if (args.length === 0) {
+        // 引数なし → 対話モード開始
+        await startAddExpenseConversation(userId, groupId, replyToken, accessToken);
+      } else {
+        // 引数あり → 通常処理
+        await handleAddCommand(replyToken, userId, groupId, args, accessToken, calendarId, mentions);
+      }
     }
     // @予定コマンド
-    else if (command.startsWith('予定 ')) {
-      const args = command.replace('予定 ', '').trim();
-      await handleScheduleCommand(replyToken, userId, groupId, args, accessToken, calendarId, mentions);
+    else if (command.startsWith('予定')) {
+      const args = command.replace('予定', '').trim();
+      if (args.length === 0) {
+        // 引数なし → 対話モード開始
+        await startAddScheduleConversation(userId, groupId, replyToken, accessToken);
+      } else {
+        // 引数あり → 通常処理
+        await handleScheduleCommand(replyToken, userId, groupId, args, accessToken, calendarId, mentions);
+      }
+    }
+    // @キャンセルコマンド
+    else if (command === 'キャンセル') {
+      await deleteConversationSession(userId);
+      await replyMessage(replyToken, '❌ 入力をキャンセルしました', accessToken);
     }
     // 不明なコマンド
     else {
@@ -357,8 +406,12 @@ async function handleDeleteCommand(
       return;
     }
 
-    // 該当する支出を削除
-    const deletedExpense = await deleteExpenseByDateAndAmount(userId, targetDate, amount);
+    // 該当する支出を削除（まず外食費用、次に買い物費用で検索）
+    let deletedExpense = await deleteExpenseByDateAndAmount(userId, targetDate, amount, '外食費用');
+
+    if (!deletedExpense) {
+      deletedExpense = await deleteExpenseByDateAndAmount(userId, targetDate, amount, '買い物費用');
+    }
 
     if (!deletedExpense) {
       await replyMessage(
@@ -576,13 +629,13 @@ async function handleScheduleCommand(
   mentions: any[] = []
 ): Promise<void> {
   try {
-    // 引数をパース（例: "田中 会議" または "田中 会議 12/15"）
+    // 引数をパース（例: "田中 会議" または "田中 会議 12/15" または "田中 会議 12/15 14:30 16:00"）
     const parts = args.split(' ').filter(p => p.length > 0);
 
     if (parts.length < 2) {
       await replyMessage(
         replyToken,
-        '❌ 形式が正しくありません\n\n使い方: @予定 {ユーザー名} {予定内容} [{日付}]\n例: @予定 田中 会議\n例: @予定 @自分 会議\n例: @予定 田中 会議 12/15',
+        '❌ 形式が正しくありません\n\n使い方: @予定 {ユーザー名} {予定内容} [{日付}] [{開始時間}] [{終了時間}]\n例: @予定 田中 会議\n例: @予定 @自分 会議\n例: @予定 田中 会議 12/15\n例: @予定 田中 会議 12/15 14:30 16:00',
         accessToken
       );
       return;
@@ -591,6 +644,8 @@ async function handleScheduleCommand(
     let userName = parts[0];
     const scheduleContent = parts[1];
     const dateInput = parts.length >= 3 ? parts[2] : null;
+    const startTimeInput = parts.length >= 4 ? parts[3] : null;
+    const endTimeInput = parts.length >= 5 ? parts[4] : null;
 
     // LINEからコマンド実行者の表示名を取得
     const displayName = await getUserDisplayName(groupId, userId, accessToken);
@@ -638,16 +693,70 @@ async function handleScheduleCommand(
 
     const dateStr = scheduleDate.toISOString().split('T')[0];
 
+    // 時間のバリデーション
+    let startTime: string | undefined;
+    let endTime: string | undefined;
+
+    if (startTimeInput) {
+      const startTimeMatch = startTimeInput.match(/^(\d{1,2}):(\d{2})$/);
+      if (startTimeMatch) {
+        const hour = parseInt(startTimeMatch[1], 10);
+        const minute = parseInt(startTimeMatch[2], 10);
+        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+          startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        } else {
+          await replyMessage(replyToken, '❌ 開始時間の形式が正しくありません\n例: 14:30（0:00〜23:59）', accessToken);
+          return;
+        }
+      } else {
+        await replyMessage(replyToken, '❌ 開始時間の形式が正しくありません\n例: 14:30', accessToken);
+        return;
+      }
+    }
+
+    if (endTimeInput) {
+      if (!startTime) {
+        await replyMessage(replyToken, '❌ 終了時間を指定する場合は開始時間も指定してください', accessToken);
+        return;
+      }
+
+      const endTimeMatch = endTimeInput.match(/^(\d{1,2}):(\d{2})$/);
+      if (endTimeMatch) {
+        const hour = parseInt(endTimeMatch[1], 10);
+        const minute = parseInt(endTimeMatch[2], 10);
+        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+          endTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+
+          // 開始時間より終了時間が早い場合はエラー
+          const startMinutes = parseInt(startTime.split(':')[0]) * 60 + parseInt(startTime.split(':')[1]);
+          const endMinutes = hour * 60 + minute;
+          if (endMinutes <= startMinutes) {
+            await replyMessage(replyToken, '❌ 終了時間は開始時間より後にしてください', accessToken);
+            return;
+          }
+        } else {
+          await replyMessage(replyToken, '❌ 終了時間の形式が正しくありません\n例: 16:00（0:00〜23:59）', accessToken);
+          return;
+        }
+      } else {
+        await replyMessage(replyToken, '❌ 終了時間の形式が正しくありません\n例: 16:00', accessToken);
+        return;
+      }
+    }
+
     // カレンダーに予定を登録
     await createScheduleEvent(
       calendarId,
       userName,
       scheduleContent,
-      dateStr
+      dateStr,
+      startTime,
+      endTime
     );
 
     // 返信メッセージを送信
-    const responseMessage = `✅ 予定を登録しました！\n\n👤 ${userName}\n📝 ${scheduleContent}\n📅 ${dateStr}`;
+    const timeDisplay = startTime && endTime ? `\n⏰ ${startTime} 〜 ${endTime}` : startTime ? `\n⏰ ${startTime} 〜` : '';
+    const responseMessage = `✅ 予定を登録しました！\n\n👤 ${userName}\n📝 ${scheduleContent}\n📅 ${dateStr}${timeDisplay}`;
 
     await replyMessage(replyToken, responseMessage, accessToken);
   } catch (error) {
