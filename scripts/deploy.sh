@@ -6,7 +6,7 @@ set -e
 # =============================================================================
 
 # 設定
-PROJECT_ID="${PROJECT_ID:-kakeibo-line-bot}"
+PROJECT_ID="${PROJECT_ID:-your-gcp-project-id}"
 REGION="${REGION:-asia-northeast1}"
 FUNCTIONS_DIR="./functions"
 
@@ -285,7 +285,7 @@ setup_scheduler() {
         --message-body='{"reportType":"mid-month"}' \
         --oidc-service-account-email="${SA_EMAIL}" \
         --oidc-token-audience="${FUNCTION_URL}" \
-        --verbosity=debug
+        --description="毎月15日9:00に前半（1〜15日）の支出集計レポートをLINEに送信"
 
     # 月末の集計ジョブ（毎月最終日）
     log_info "月末の集計ジョブを設定中..."
@@ -309,7 +309,8 @@ setup_scheduler() {
         --headers="Content-Type=application/json" \
         --message-body='{"reportType":"end-month"}' \
         --oidc-service-account-email="${SA_EMAIL}" \
-        --oidc-token-audience="${FUNCTION_URL}"
+        --oidc-token-audience="${FUNCTION_URL}" \
+        --description="毎月末9:00に後半（16〜月末）の支出集計・月間精算レポートをLINEに送信"
 
     # 毎朝7:00の予定通知ジョブ
     log_info "毎朝の予定通知ジョブを設定中..."
@@ -333,7 +334,8 @@ setup_scheduler() {
         --headers="Content-Type=application/json" \
         --message-body='{"type":"daily-schedule"}' \
         --oidc-service-account-email="${SA_EMAIL}" \
-        --oidc-token-audience="${FUNCTION_URL_SCHEDULE}"
+        --oidc-token-audience="${FUNCTION_URL_SCHEDULE}" \
+        --description="毎朝7:00に当日のGoogleカレンダー予定をLINEに通知"
 
     # 毎月1日のサブスク自動登録ジョブ
     log_info "サブスク自動登録ジョブを設定中..."
@@ -357,7 +359,8 @@ setup_scheduler() {
         --headers="Content-Type=application/json" \
         --message-body='{"type":"monthly-subscriptions"}' \
         --oidc-service-account-email="${SA_EMAIL}" \
-        --oidc-token-audience="${FUNCTION_URL_SUBSCRIPTIONS}"
+        --oidc-token-audience="${FUNCTION_URL_SUBSCRIPTIONS}" \
+        --description="毎月1日9:00に登録済みサブスクを自動でカレンダー・支出に登録"
 
     # 毎月1日の家賃自動登録ジョブ
     log_info "家賃自動登録ジョブを設定中..."
@@ -381,7 +384,8 @@ setup_scheduler() {
         --headers="Content-Type=application/json" \
         --message-body='{"type":"monthly-rent"}' \
         --oidc-service-account-email="${SA_EMAIL}" \
-        --oidc-token-audience="${FUNCTION_URL_RENT}"
+        --oidc-token-audience="${FUNCTION_URL_RENT}" \
+        --description="毎月1日9:00に家賃を月末日付でカレンダーに自動登録"
 
     log_info "Cloud Scheduler 設定完了"
     echo ""
