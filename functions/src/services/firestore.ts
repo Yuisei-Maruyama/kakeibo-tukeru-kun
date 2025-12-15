@@ -72,7 +72,7 @@ export async function getAllUsers(): Promise<User[]> {
 }
 
 /**
- * 表示名でユーザーを検索
+ * 表示名でユーザーを検索（完全一致）
  */
 export async function getUserByDisplayName(displayName: string): Promise<User | null> {
   const db = getFirestore();
@@ -87,6 +87,33 @@ export async function getUserByDisplayName(displayName: string): Promise<User | 
   }
 
   return usersSnapshot.docs[0].data() as User;
+}
+
+/**
+ * 表示名でユーザーを検索（部分一致）
+ * 入力文字列がdisplayNameに含まれるユーザーを検索
+ */
+export async function getUserByDisplayNamePartial(partialName: string): Promise<User | null> {
+  const db = getFirestore();
+  // Firestoreは部分一致クエリをサポートしていないため、全ユーザーを取得してフィルタリング
+  const usersSnapshot = await db.collection('users')
+    .where('isActive', '==', true)
+    .get();
+
+  if (usersSnapshot.empty) {
+    return null;
+  }
+
+  // 部分一致で検索（大文字小文字を区別しない）
+  const lowerPartialName = partialName.toLowerCase();
+  for (const doc of usersSnapshot.docs) {
+    const user = doc.data() as User;
+    if (user.displayName.toLowerCase().includes(lowerPartialName)) {
+      return user;
+    }
+  }
+
+  return null;
 }
 
 /**

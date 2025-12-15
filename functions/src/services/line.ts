@@ -159,6 +159,7 @@ export function createHelpMessage(): string {
   message += `@追加 外食費用 名前 金額 日付\n\n`;
   message += `💡 ヒント\n`;
   message += `・@自分 → 送信者の名前に置換\n`;
+  message += `・名前は部分一致で検索（通知なし）\n`;
   message += `・日付省略 → 今日の日付\n\n`;
 
   // 予定登録

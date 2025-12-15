@@ -6,7 +6,7 @@ import { Category, ConversationSession, ReportType } from '../types/index.js';
 
 // Services
 import { analyzeReceiptImage } from '../services/gemini.js';
-import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession } from '../services/firestore.js';
+import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession, getUserByDisplayNamePartial } from '../services/firestore.js';
 import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '../services/calendar.js';
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
 import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation } from './conversation.js';
@@ -631,6 +631,14 @@ async function handleAddCommand(
       // メンションの最初のユーザーを使用
       const mentionedUserId = mentions[0].userId;
       payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+    }
+    // @なしの名前の場合、登録済みユーザーから部分一致検索
+    else if (!payerName.startsWith('@')) {
+      const matchedUser = await getUserByDisplayNamePartial(payerName);
+      if (matchedUser) {
+        payerName = matchedUser.displayName;
+      }
+      // 見つからない場合はそのまま入力値を使用
     }
 
     // カテゴリーチェック
