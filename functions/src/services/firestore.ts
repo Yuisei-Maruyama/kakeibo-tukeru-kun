@@ -1,5 +1,5 @@
 import { Firestore, Timestamp } from '@google-cloud/firestore';
-import { User, Expense, Settings, Category, ConversationSession } from '../types/index.js';
+import { User, Expense, Settings, Category, ConversationSession, Subscription } from '../types/index.js';
 
 /**
  * Firestoreクライアント
@@ -447,4 +447,78 @@ export async function getUserIdByDisplayName(
 
   console.warn(`No user found for: ${displayName}`);
   return null;
+}
+
+// =============================================================================
+// サブスクリプション操作
+// =============================================================================
+
+/**
+ * サブスクリプションを保存
+ */
+export async function saveSubscription(
+  subscription: Omit<Subscription, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<string> {
+  const db = getFirestore();
+  const subscriptionRef = db.collection('subscriptions').doc();
+
+  const newSubscription: Subscription = {
+    ...subscription,
+    id: subscriptionRef.id,
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  };
+
+  await subscriptionRef.set(newSubscription);
+  console.log(`Subscription saved: ${subscriptionRef.id}`);
+  return subscriptionRef.id;
+}
+
+/**
+ * グループの有効なサブスクリプション一覧を取得
+ */
+export async function getActiveSubscriptions(groupId: string): Promise<Subscription[]> {
+  const db = getFirestore();
+  const snapshot = await db
+    .collection('subscriptions')
+    .where('groupId', '==', groupId)
+    .where('isActive', '==', true)
+    .orderBy('startDate', 'asc')
+    .get();
+
+  return snapshot.docs.map(doc => doc.data() as Subscription);
+}
+
+/**
+ * サブスクリプションを取得
+ */
+export async function getSubscription(subscriptionId: string): Promise<Subscription | null> {
+  const db = getFirestore();
+  const doc = await db.collection('subscriptions').doc(subscriptionId).get();
+  return doc.exists ? (doc.data() as Subscription) : null;
+}
+
+/**
+ * サブスクリプションを無効化（論理削除）
+ */
+export async function deactivateSubscription(subscriptionId: string): Promise<void> {
+  const db = getFirestore();
+  await db.collection('subscriptions').doc(subscriptionId).update({
+    isActive: false,
+    updatedAt: Timestamp.now(),
+  });
+  console.log(`Subscription deactivated: ${subscriptionId}`);
+}
+
+/**
+ * 全グループの有効なサブスクリプションを取得
+ */
+export async function getAllActiveSubscriptions(): Promise<Subscription[]> {
+  const db = getFirestore();
+  const snapshot = await db
+    .collection('subscriptions')
+    .where('isActive', '==', true)
+    .get();
+
+  return snapshot.docs.map(doc => doc.data() as Subscription);
 }

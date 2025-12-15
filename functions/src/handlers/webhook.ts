@@ -9,7 +9,7 @@ import { analyzeReceiptImage } from '../services/gemini.js';
 import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession } from '../services/firestore.js';
 import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '../services/calendar.js';
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
-import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput } from './conversation.js';
+import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation } from './conversation.js';
 import { generateReportData, getReportPeriod } from './scheduler.js';
 
 /**
@@ -341,6 +341,18 @@ async function handleTextMessage(
     // @設定変更コマンド
     else if (command === '設定変更') {
       await startChangeSettingsConversation(userId, groupId, replyToken, accessToken);
+    }
+    // @サブスク一覧コマンド
+    else if (command === 'サブスク一覧') {
+      await showSubscriptionList(groupId, replyToken, accessToken);
+    }
+    // @サブスク追加コマンド
+    else if (command === 'サブスク追加') {
+      await startAddSubscriptionConversation(userId, groupId, replyToken, accessToken);
+    }
+    // @サブスク削除コマンド
+    else if (command === 'サブスク削除') {
+      await startDeleteSubscriptionConversation(userId, groupId, replyToken, accessToken);
     }
     // @キャンセルコマンド
     else if (command === 'キャンセル') {

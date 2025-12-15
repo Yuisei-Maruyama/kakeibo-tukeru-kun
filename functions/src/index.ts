@@ -1,6 +1,6 @@
 import { HttpFunction } from '@google-cloud/functions-framework';
 import { handleWebhook } from './handlers/webhook.js';
-import { handleScheduledReport, handleDailyScheduleNotification, handleCalendarSync } from './handlers/scheduler.js';
+import { handleScheduledReport, handleDailyScheduleNotification, handleCalendarSync, handleMonthlySubscriptions } from './handlers/scheduler.js';
 
 /**
  * LINE Webhook Handler
@@ -32,4 +32,12 @@ export const dailyScheduleNotification: HttpFunction = async (req, res) => {
  */
 export const calendarSync: HttpFunction = async (req, res) => {
   await handleCalendarSync(req, res);
+};
+
+/**
+ * Monthly Subscriptions Handler
+ * Cloud Scheduler から呼び出され、毎月1日にサブスクを自動登録
+ */
+export const monthlySubscriptions: HttpFunction = async (req, res) => {
+  await handleMonthlySubscriptions(req, res);
 };

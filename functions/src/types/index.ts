@@ -134,9 +134,32 @@ export interface CalendarEventParams {
 }
 
 /**
+ * 配送/支払い間隔の単位
+ */
+export type IntervalUnit = 'week' | 'month';
+
+/**
+ * サブスクリプション（定期支払い）情報
+ */
+export interface Subscription {
+  id: string;                    // 自動生成ID
+  groupId: string;               // グループID
+  payerName: string;             // 支払い者名
+  payerUserId: string;           // 支払い者ユーザーID
+  serviceName: string;           // サービス名/支払い内容（例: Netflix, Amazon定期便 猫砂）
+  amount: number;                // 金額
+  startDate: Timestamp;          // 開始日（初回の支払日）
+  intervalUnit: IntervalUnit;    // 間隔の単位（week: 週, month: 月）
+  intervalValue: number;         // 間隔の数値（例: 2週間ごとなら2, 3ヶ月ごとなら3）
+  isActive: boolean;             // 有効状態
+  createdAt: Timestamp;          // 作成日時
+  updatedAt: Timestamp;          // 更新日時
+}
+
+/**
  * 対話セッションの種別
  */
-export type ConversationType = 'add_expense' | 'add_schedule' | 'delete_expense' | 'initial_setup' | 'change_settings';
+export type ConversationType = 'add_expense' | 'add_schedule' | 'delete_expense' | 'initial_setup' | 'change_settings' | 'add_subscription' | 'list_subscription' | 'delete_subscription';
 
 /**
  * 対話セッションの状態
@@ -156,7 +179,15 @@ export type ConversationStep =
   | 'start_time'        // 開始時間入力（@予定のみ）
   | 'end_time'          // 終了時間入力（@予定のみ）
   | 'first_half_payer'  // 前半担当者選択（@初期設定・@設定変更）
-  | 'second_half_payer';// 後半担当者選択（@初期設定・@設定変更）
+  | 'second_half_payer' // 後半担当者選択（@初期設定・@設定変更）
+  | 'subscription_payer'          // サブスク支払い者入力
+  | 'subscription_service'        // サブスク支払い内容入力
+  | 'subscription_amount'         // サブスク金額入力
+  | 'subscription_start_date'     // サブスク開始日入力
+  | 'subscription_interval_unit'  // サブスク間隔単位選択（週/月）
+  | 'subscription_interval_value' // サブスク間隔数値入力
+  | 'subscription_select'         // サブスク選択（削除用）
+  | 'subscription_action';        // サブスクアクション選択（一覧表示後）
 
 /**
  * 対話セッション情報
@@ -184,6 +215,14 @@ export interface ConversationSession {
     deleteAmount?: number;       // 削除対象金額
     firstHalfPayerId?: string;   // 前半担当者ID（@初期設定・@設定変更）
     secondHalfPayerId?: string;  // 後半担当者ID（@初期設定・@設定変更）
+    subscriptionPayerName?: string;     // サブスク支払い者名
+    subscriptionPayerUserId?: string;   // サブスク支払い者ユーザーID
+    subscriptionServiceName?: string;   // サブスク支払い内容
+    subscriptionAmount?: number;        // サブスク金額
+    subscriptionStartDate?: string;     // サブスク開始日（YYYY-MM-DD形式）
+    subscriptionIntervalUnit?: 'week' | 'month'; // サブスク間隔単位
+    subscriptionIntervalValue?: number; // サブスク間隔数値
+    subscriptionId?: string;            // 削除対象サブスクID
   };
   createdAt: Timestamp;          // 作成日時
   expiresAt: Timestamp;          // 有効期限（10分後）

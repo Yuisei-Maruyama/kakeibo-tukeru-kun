@@ -133,45 +133,73 @@ export function createErrorMessage(reason?: string): string {
  * ヘルプメッセージを生成
  */
 export function createHelpMessage(): string {
-  let message = `📚 家計簿Bot コマンド一覧\n\n`;
+  let message = `📚 家計簿Bot ヘルプ\n`;
+  message += `━━━━━━━━━━━━━━━\n\n`;
 
-  message += `【情報表示】\n`;
-  message += `@ヘルプ - このヘルプを表示\n`;
-  message += `@残高 - 外食残高を表示\n`;
-  message += `@レポート - 集計レポートを表示\n`;
-  message += `  例: @レポート（現在期間）\n`;
-  message += `  例: @レポート 前半（1-15日）\n`;
-  message += `  例: @レポート 月末（16日-月末）\n`;
-  message += `@履歴 - 直近10件の支出履歴\n\n`;
+  // 基本の使い方
+  message += `🔰 基本の使い方\n`;
+  message += `────────────────\n`;
+  message += `📸 レシート画像を送信\n`;
+  message += `　→ 自動で解析・登録されます\n\n`;
 
-  message += `【操作】\n`;
-  message += `@追加 {カテゴリー} {支払い者名} {金額} [{日付}]\n`;
-  message += `  例: @追加 外食費用 田中 1280（今日の日付）\n`;
-  message += `  例: @追加 外食費用 @自分 1280（@自分で送信者）\n`;
-  message += `  例: @追加 外食費用 田中 1280 12/1（日付指定）\n`;
-  message += `  例: @追加（引数なしで対話形式）\n`;
-  message += `  ※ 日付を省略すると今日の日付になります\n`;
-  message += `  ※ @自分 で自分の名前を自動入力\n`;
-  message += `  ※ @メンション でユーザー指定可能\n\n`;
+  // よく使うコマンド
+  message += `⭐ よく使うコマンド\n`;
+  message += `────────────────\n`;
+  message += `@残高　　　外食残高を確認\n`;
+  message += `@履歴　　　直近10件の支出\n`;
+  message += `@レポート　集計レポート表示\n\n`;
 
-  message += `@予定 {ユーザー名} {予定内容} [{日付}] [{時刻}]\n`;
-  message += `  例: @予定 田中 会議（今日・終日）\n`;
-  message += `  例: @予定 田中 会議 12/15（日付指定）\n`;
-  message += `  例: @予定 田中 会議 12/15 14:30 16:00（時間指定）\n`;
-  message += `  例: @予定（引数なしで対話形式）\n`;
-  message += `  ※ 日付を省略すると今日の日付になります\n`;
-  message += `  ※ 過去の日付は自動的に翌年になります\n`;
-  message += `  ※ 時間を省略すると終日予定になります\n\n`;
+  // 支出登録
+  message += `💰 支出を登録する\n`;
+  message += `────────────────\n`;
+  message += `@追加\n`;
+  message += `　→ 対話形式で登録できます\n\n`;
+  message += `一括入力の場合:\n`;
+  message += `@追加 外食費用 名前 金額\n`;
+  message += `@追加 外食費用 名前 金額 日付\n\n`;
+  message += `💡 ヒント\n`;
+  message += `・@自分 → 送信者の名前に置換\n`;
+  message += `・日付省略 → 今日の日付\n\n`;
 
-  message += `@削除 {日付} {金額}\n`;
-  message += `  例: @削除 12/3 1280\n`;
-  message += `  例: @削除（引数なしで対話形式）\n\n`;
+  // 予定登録
+  message += `📅 予定を登録する\n`;
+  message += `────────────────\n`;
+  message += `@予定\n`;
+  message += `　→ 対話形式で登録できます\n\n`;
+  message += `一括入力の場合:\n`;
+  message += `@予定 名前 内容\n`;
+  message += `@予定 名前 内容 日付\n`;
+  message += `@予定 名前 内容 日付 開始 終了\n\n`;
 
-  message += `【設定】\n`;
-  message += `@予算 {金額} - 月額予算を変更\n`;
-  message += `  例: @予算 60000\n`;
-  message += `@初期設定 - 外食担当者を設定（対話形式）\n`;
-  message += `@設定変更 - 外食担当者を変更（対話形式）`;
+  // 削除
+  message += `🗑️ 支出を削除する\n`;
+  message += `────────────────\n`;
+  message += `@削除\n`;
+  message += `　→ 対話形式で削除できます\n\n`;
+  message += `一括入力の場合:\n`;
+  message += `@削除 日付 金額\n\n`;
+
+  // サブスク
+  message += `🔄 サブスク（定期支払い）\n`;
+  message += `────────────────\n`;
+  message += `@サブスク一覧　一覧を表示\n`;
+  message += `@サブスク追加　新規登録\n`;
+  message += `@サブスク削除　登録を削除\n\n`;
+  message += `💡 登録時に設定する項目:\n`;
+  message += `・支払い者\n`;
+  message += `・支払い内容（Netflix等）\n`;
+  message += `・金額\n`;
+  message += `・開始日（初回支払日）\n`;
+  message += `・間隔（週/月ごと）\n\n`;
+  message += `📅 月初めに該当日を自動算出し\n`;
+  message += `　 買い物費用として登録されます\n\n`;
+
+  // 設定
+  message += `⚙️ 設定\n`;
+  message += `────────────────\n`;
+  message += `@予算 金額　　月額予算を変更\n`;
+  message += `@初期設定　　　外食担当者を設定\n`;
+  message += `@設定変更　　　外食担当者を変更`;
 
   return message;
 }

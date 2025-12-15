@@ -1,8 +1,8 @@
 import { Request, Response } from '@google-cloud/functions-framework';
 import { Timestamp } from '@google-cloud/firestore';
-import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, expenseExistsByCalendarEventId, getUserIdByDisplayName, saveExpense, updateDiningBalance, getUser } from '../services/firestore.js';
+import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, expenseExistsByCalendarEventId, getUserIdByDisplayName, saveExpense, updateDiningBalance, getUser, getAllActiveSubscriptions } from '../services/firestore.js';
 import { pushMessage, createReportMessage } from '../services/line.js';
-import { getTodaySchedules, getMonthlyExpenseEvents } from '../services/calendar.js';
+import { getTodaySchedules, getMonthlyExpenseEvents, createCalendarEvent } from '../services/calendar.js';
 import { ReportData, ReportType, UserExpenses, MonthlySummary } from '../types/index.js';
 import { getJSTYear, getJSTMonth, getJSTInfo } from '../utils/date.js';
 
@@ -422,4 +422,223 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
       details: errorMsg,
     });
   }
+}
+
+/**
+ * 月初めサブスク自動登録ハンドラー
+ * 毎月1日に実行し、その月のサブスクを全て登録する
+ */
+export async function handleMonthlySubscriptions(req: Request, res: Response): Promise<void> {
+  try {
+    const calendarId = process.env.GOOGLE_CALENDAR_ID || '';
+    const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
+
+    if (!calendarId) {
+      console.error('GOOGLE_CALENDAR_ID not set');
+      res.status(500).json({ error: 'Calendar ID not configured' });
+      return;
+    }
+
+    const settings = await getSettings();
+    if (!settings || !settings.lineGroupId) {
+      console.error('Settings not found or lineGroupId not set');
+      res.status(500).json({ error: 'Settings not configured' });
+      return;
+    }
+
+    // JST（日本時間）で年月を取得
+    const year = getJSTYear();
+    const month = getJSTMonth();
+    const jstInfo = getJSTInfo();
+
+    console.log(`Starting monthly subscription registration for ${year}/${month} (JST: ${jstInfo.formatted})`);
+
+    // 全アクティブなサブスクを取得
+    const subscriptions = await getAllActiveSubscriptions();
+
+    if (subscriptions.length === 0) {
+      console.log('No active subscriptions found');
+      res.status(200).json({ status: 'ok', registered: 0, message: 'No active subscriptions' });
+      return;
+    }
+
+    // 対象月の範囲を計算
+    const monthStart = new Date(year, month - 1, 1);
+    const monthEnd = new Date(year, month, 0); // 月末日
+
+    let registeredCount = 0;
+    let errorCount = 0;
+    const registeredItems: string[] = [];
+
+    // 各サブスクの該当日を計算して登録
+    for (const subscription of subscriptions) {
+      try {
+        // 該当月の配送/支払い日を算出
+        const deliveryDates = calculateDeliveryDatesForMonth(
+          subscription.startDate.toDate(),
+          subscription.intervalUnit,
+          subscription.intervalValue,
+          monthStart,
+          monthEnd
+        );
+
+        if (deliveryDates.length === 0) {
+          console.log(`No delivery dates in ${year}/${month} for subscription: ${subscription.serviceName}`);
+          continue;
+        }
+
+        // 各日付に対して登録
+        for (const deliveryDate of deliveryDates) {
+          const day = deliveryDate.getDate();
+          const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+          // カレンダーに登録（カテゴリーは「買い物費用」固定）
+          const calendarEventId = await createCalendarEvent(
+            calendarId,
+            subscription.payerName,
+            subscription.amount,
+            '買い物費用',
+            subscription.serviceName, // 支払い内容をstoreNameとして使用
+            dateStr
+          );
+
+          // Firestoreに保存
+          await saveExpense({
+            userId: subscription.payerUserId,
+            userName: subscription.payerName,
+            amount: subscription.amount,
+            category: '買い物費用',
+            storeName: subscription.serviceName,
+            date: Timestamp.fromDate(deliveryDate),
+            calendarEventId,
+          });
+
+          console.log(`Registered subscription: ${subscription.serviceName} - ${subscription.payerName} ¥${subscription.amount} on ${dateStr}`);
+          registeredItems.push(`${subscription.serviceName}（${subscription.payerName}・¥${subscription.amount.toLocaleString()}・${month}/${day}）`);
+          registeredCount++;
+        }
+      } catch (error) {
+        console.error(`Failed to register subscription ${subscription.id}:`, error);
+        errorCount++;
+      }
+    }
+
+    // LINEに通知を送信
+    if (registeredCount > 0) {
+      let message = `🔄 サブスク自動登録完了\n`;
+      message += `━━━━━━━━━━━━━━━\n\n`;
+      message += `${year}年${month}月分のサブスクを登録しました\n\n`;
+
+      registeredItems.forEach(item => {
+        message += `✅ ${item}\n`;
+      });
+
+      if (errorCount > 0) {
+        message += `\n⚠️ ${errorCount}件の登録に失敗しました`;
+      }
+
+      await pushMessage(settings.lineGroupId, message, accessToken);
+    }
+
+    console.log(`Monthly subscription registration completed: ${registeredCount} registered, ${errorCount} errors`);
+
+    res.status(200).json({
+      status: 'ok',
+      registered: registeredCount,
+      errors: errorCount,
+      total: subscriptions.length,
+    });
+  } catch (error) {
+    console.error('Monthly subscription registration error:', error);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    res.status(500).json({
+      error: 'Internal server error',
+      details: errorMsg,
+    });
+  }
+}
+
+/**
+ * 指定月の配送/支払い日を計算
+ * @param startDate 開始日
+ * @param intervalUnit 間隔単位（week / month）
+ * @param intervalValue 間隔数値
+ * @param monthStart 対象月の開始日
+ * @param monthEnd 対象月の終了日
+ * @returns 対象月に該当する配送日の配列
+ */
+function calculateDeliveryDatesForMonth(
+  startDate: Date,
+  intervalUnit: 'week' | 'month',
+  intervalValue: number,
+  monthStart: Date,
+  monthEnd: Date
+): Date[] {
+  const deliveryDates: Date[] = [];
+
+  // 開始日を正規化（時間部分を除去）
+  const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const end = new Date(monthEnd.getFullYear(), monthEnd.getMonth(), monthEnd.getDate());
+
+  // 開始日が対象月より後の場合は空配列を返す
+  if (start > end) {
+    return deliveryDates;
+  }
+
+  if (intervalUnit === 'week') {
+    // 週単位の計算
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const intervalDays = intervalValue * 7;
+
+    // 開始日から対象月の範囲内の日付を計算
+    let current = new Date(start);
+
+    // 対象月より前の日付は、対象月に入るまでスキップ
+    while (current < monthStart) {
+      current = new Date(current.getTime() + intervalDays * msPerDay);
+    }
+
+    // 対象月内の日付を収集
+    while (current <= end) {
+      deliveryDates.push(new Date(current));
+      current = new Date(current.getTime() + intervalDays * msPerDay);
+    }
+  } else {
+    // 月単位の計算
+    let currentYear = start.getFullYear();
+    let currentMonth = start.getMonth();
+    const startDay = start.getDate();
+
+    // 開始日から対象月の範囲内の日付を計算
+    while (true) {
+      // 該当月の日付を生成（日付が存在しない場合は月末に調整）
+      const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+      const day = Math.min(startDay, daysInMonth);
+      const current = new Date(currentYear, currentMonth, day);
+
+      // 対象月を過ぎたら終了
+      if (current > end) {
+        break;
+      }
+
+      // 対象月内であれば追加
+      if (current >= monthStart && current <= end) {
+        deliveryDates.push(current);
+      }
+
+      // 次の配送月に進む
+      currentMonth += intervalValue;
+      if (currentMonth >= 12) {
+        currentYear += Math.floor(currentMonth / 12);
+        currentMonth = currentMonth % 12;
+      }
+
+      // 無限ループ防止（開始日が対象月より前で、intervalValueが大きすぎる場合）
+      if (currentYear > end.getFullYear() + 1) {
+        break;
+      }
+    }
+  }
+
+  return deliveryDates;
 }
