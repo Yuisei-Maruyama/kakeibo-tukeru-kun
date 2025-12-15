@@ -1,5 +1,5 @@
 import { Firestore, Timestamp } from '@google-cloud/firestore';
-import { User, Expense, Settings, Category, ConversationSession, Subscription } from '../types/index.js';
+import { User, Expense, Settings, Category, ConversationSession, Subscription, Rent } from '../types/index.js';
 
 /**
  * Firestoreクライアント
@@ -536,4 +536,61 @@ export async function updateSubscription(
     updatedAt: Timestamp.now(),
   });
   console.log(`Subscription updated: ${subscriptionId}`, updates);
+}
+
+// =============================================================================
+// 家賃操作
+// =============================================================================
+
+/**
+ * 家賃情報を保存（または更新）
+ */
+export async function saveRent(
+  rent: Omit<Rent, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<void> {
+  const db = getFirestore();
+  const rentRef = db.collection('rents').doc('global');
+  const existingDoc = await rentRef.get();
+
+  if (existingDoc.exists) {
+    // 既存の場合は更新
+    await rentRef.update({
+      ...rent,
+      updatedAt: Timestamp.now(),
+    });
+    console.log('Rent updated');
+  } else {
+    // 新規作成
+    const newRent: Rent = {
+      ...rent,
+      id: 'global',
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    };
+    await rentRef.set(newRent);
+    console.log('Rent created');
+  }
+}
+
+/**
+ * 家賃情報を取得
+ */
+export async function getRent(): Promise<Rent | null> {
+  const db = getFirestore();
+  const rentDoc = await db.collection('rents').doc('global').get();
+  return rentDoc.exists ? (rentDoc.data() as Rent) : null;
+}
+
+/**
+ * 家賃情報を更新
+ */
+export async function updateRent(
+  updates: Partial<Omit<Rent, 'id' | 'createdAt' | 'updatedAt'>>
+): Promise<void> {
+  const db = getFirestore();
+  await db.collection('rents').doc('global').update({
+    ...updates,
+    updatedAt: Timestamp.now(),
+  });
+  console.log('Rent updated:', updates);
 }

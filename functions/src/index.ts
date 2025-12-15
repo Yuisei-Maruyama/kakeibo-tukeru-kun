@@ -1,6 +1,6 @@
 import { HttpFunction } from '@google-cloud/functions-framework';
 import { handleWebhook } from './handlers/webhook.js';
-import { handleScheduledReport, handleDailyScheduleNotification, handleCalendarSync, handleMonthlySubscriptions } from './handlers/scheduler.js';
+import { handleScheduledReport, handleDailyScheduleNotification, handleCalendarSync, handleMonthlySubscriptions, handleMonthlyRent } from './handlers/scheduler.js';
 
 /**
  * LINE Webhook Handler
@@ -40,4 +40,12 @@ export const calendarSync: HttpFunction = async (req, res) => {
  */
 export const monthlySubscriptions: HttpFunction = async (req, res) => {
   await handleMonthlySubscriptions(req, res);
+};
+
+/**
+ * Monthly Rent Handler
+ * Cloud Scheduler から呼び出され、毎月1日に家賃を自動登録（月末日に登録）
+ */
+export const monthlyRent: HttpFunction = async (req, res) => {
+  await handleMonthlyRent(req, res);
 };

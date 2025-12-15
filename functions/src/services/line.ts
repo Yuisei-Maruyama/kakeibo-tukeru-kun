@@ -195,6 +195,14 @@ export function createHelpMessage(): string {
   message += `📅 月初めに該当日を自動算出し\n`;
   message += `　 買い物費用として登録されます\n\n`;
 
+  // 家賃
+  message += `🏠 家賃\n`;
+  message += `────────────────\n`;
+  message += `@家賃追加　家賃情報を登録\n`;
+  message += `@家賃変更　家賃情報を変更\n\n`;
+  message += `💡 月初めに月末日の予定として\n`;
+  message += `　 自動でカレンダーに登録されます\n\n`;
+
   // 設定
   message += `⚙️ 設定\n`;
   message += `────────────────\n`;

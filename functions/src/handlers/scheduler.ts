@@ -1,6 +1,6 @@
 import { Request, Response } from '@google-cloud/functions-framework';
 import { Timestamp } from '@google-cloud/firestore';
-import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, expenseExistsByCalendarEventId, getUserIdByDisplayName, saveExpense, updateDiningBalance, getUser, getAllActiveSubscriptions } from '../services/firestore.js';
+import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, expenseExistsByCalendarEventId, getUserIdByDisplayName, saveExpense, updateDiningBalance, getUser, getAllActiveSubscriptions, getRent } from '../services/firestore.js';
 import { pushMessage, createReportMessage } from '../services/line.js';
 import { getTodaySchedules, getMonthlyExpenseEvents, createCalendarEvent } from '../services/calendar.js';
 import { ReportData, ReportType, UserExpenses, MonthlySummary } from '../types/index.js';
@@ -641,4 +641,89 @@ function calculateDeliveryDatesForMonth(
   }
 
   return deliveryDates;
+}
+
+/**
+ * 月初め家賃自動登録ハンドラー
+ * 毎月1日に実行し、その月の月末に家賃を登録する
+ */
+export async function handleMonthlyRent(req: Request, res: Response): Promise<void> {
+  try {
+    const calendarId = process.env.GOOGLE_CALENDAR_ID || '';
+    const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
+
+    if (!calendarId) {
+      console.error('GOOGLE_CALENDAR_ID not set');
+      res.status(500).json({ error: 'Calendar ID not configured' });
+      return;
+    }
+
+    const settings = await getSettings();
+    if (!settings || !settings.lineGroupId) {
+      console.error('Settings not found or lineGroupId not set');
+      res.status(500).json({ error: 'Settings not configured' });
+      return;
+    }
+
+    // JST（日本時間）で年月を取得
+    const year = getJSTYear();
+    const month = getJSTMonth();
+    const jstInfo = getJSTInfo();
+
+    console.log(`Starting monthly rent registration for ${year}/${month} (JST: ${jstInfo.formatted})`);
+
+    // 家賃情報を取得
+    const rent = await getRent();
+
+    if (!rent) {
+      console.log('No rent information found, skipping');
+      res.status(200).json({ status: 'ok', registered: 0, message: 'No rent information' });
+      return;
+    }
+
+    // 月末日を計算
+    const lastDayOfMonth = new Date(year, month, 0).getDate();
+    const lastDay = new Date(year, month - 1, lastDayOfMonth);
+    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(lastDayOfMonth).padStart(2, '0')}`;
+
+    // カレンダーに登録（カテゴリーは「家賃費用」）
+    const calendarEventId = await createCalendarEvent(
+      calendarId,
+      rent.payerName,
+      rent.amount,
+      '家賃費用',
+      '家賃',
+      dateStr
+    );
+
+    // Firestoreには保存しない（家賃は精算対象外のため）
+    // カレンダーのみに登録
+
+    console.log(`Registered rent: ${rent.payerName} ¥${rent.amount} on ${dateStr}`);
+
+    // LINEに通知を送信
+    const message = `🏠 家賃自動登録完了
+━━━━━━━━━━━━━━━
+
+${year}年${month}月分の家賃を登録しました
+
+✅ 家賃費用（${rent.payerName}・¥${rent.amount.toLocaleString()}・${month}/${lastDayOfMonth}）`;
+
+    await pushMessage(settings.lineGroupId, message, accessToken);
+
+    console.log('Monthly rent registration completed');
+
+    res.status(200).json({
+      status: 'ok',
+      registered: 1,
+      date: dateStr,
+    });
+  } catch (error) {
+    console.error('Monthly rent registration error:', error);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    res.status(500).json({
+      error: 'Internal server error',
+      details: errorMsg,
+    });
+  }
 }

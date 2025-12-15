@@ -16,6 +16,9 @@ import {
   deactivateSubscription,
   getSubscription,
   updateSubscription,
+  saveRent,
+  getRent,
+  updateRent,
 } from '../services/firestore.js';
 import { createCalendarEvent, createScheduleEvent, deleteCalendarEvent } from '../services/calendar.js';
 import { replyMessage, createRegistrationMessage, getUserDisplayName, createDeleteMessage } from '../services/line.js';
@@ -176,6 +179,10 @@ export async function handleConversationInput(
       await handleDeleteSubscriptionConversation(session, input, replyToken, userId, groupId, accessToken);
     } else if (session.type === 'edit_subscription') {
       await handleEditSubscriptionConversation(session, input, replyToken, userId, groupId, accessToken, mentions);
+    } else if (session.type === 'add_rent') {
+      await handleAddRentConversation(session, input, replyToken, userId, groupId, accessToken, mentions);
+    } else if (session.type === 'edit_rent') {
+      await handleEditRentConversation(session, input, replyToken, userId, groupId, accessToken, mentions);
     }
     console.log(`handleConversationInput completed successfully`);
   } catch (error) {
@@ -1550,6 +1557,282 @@ async function handleEditSubscriptionConversation(
 🔄 ${intervalDisplay}`;
 
     await replyMessage(replyToken, message, accessToken);
+    await deleteConversationSession(userId);
+  }
+}
+
+// =============================================================================
+// 家賃関連
+// =============================================================================
+
+/**
+ * @家賃追加の対話モード開始
+ */
+export async function startAddRentConversation(
+  userId: string,
+  groupId: string,
+  replyToken: string,
+  accessToken: string
+): Promise<void> {
+  const session: ConversationSession = {
+    userId,
+    groupId,
+    type: 'add_rent',
+    step: 'rent_payer',
+    data: {},
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+  };
+
+  await saveConversationSession(session);
+
+  const message = `🏠 家賃情報を登録します
+
+支払い者を入力してください
+（@自分 で自分の名前、@メンションでユーザー指定）`;
+
+  await replyMessage(replyToken, message, accessToken);
+}
+
+/**
+ * @家賃追加の対話処理
+ */
+async function handleAddRentConversation(
+  session: ConversationSession,
+  input: string,
+  replyToken: string,
+  userId: string,
+  groupId: string,
+  accessToken: string,
+  mentions: any[]
+): Promise<void> {
+  const { step } = session;
+
+  if (step === 'rent_payer') {
+    let payerName = input.trim();
+    let payerUserId: string | undefined = undefined;
+
+    const displayName = await getUserDisplayName(groupId, userId, accessToken);
+
+    // 全角・半角の@自分に対応
+    if (payerName === '@自分' || payerName === '＠自分') {
+      payerName = displayName;
+      payerUserId = userId;
+    } else if (mentions.length > 0 && (payerName.startsWith('@') || payerName.startsWith('＠'))) {
+      const mentionedUserId = mentions[0].userId;
+      payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+      payerUserId = mentionedUserId;
+    } else {
+      // テキストで名前を入力した場合、既存ユーザーから検索
+      const existingUser = await getUserByDisplayName(payerName);
+      if (existingUser) {
+        payerUserId = existingUser.id;
+      }
+    }
+
+    if (!payerUserId) {
+      await replyMessage(
+        replyToken,
+        `❌ ユーザー「${payerName}」が見つかりませんでした。\n\n@メンション または @自分 を使用してください。`,
+        accessToken
+      );
+      return;
+    }
+
+    session.data.rentPayerName = payerName;
+    session.data.rentPayerUserId = payerUserId;
+    session.step = 'rent_amount';
+    await updateConversationSession(userId, { step: 'rent_amount', data: session.data });
+
+    await replyMessage(replyToken, `金額を入力してください（数字のみ）`, accessToken);
+  } else if (step === 'rent_amount') {
+    const amount = parseInt(input.replace(/[,，]/g, ''), 10);
+    if (isNaN(amount) || amount <= 0) {
+      await replyMessage(replyToken, '❌ 正しい金額を入力してください', accessToken);
+      return;
+    }
+
+    const payerName = session.data.rentPayerName!;
+    const payerUserId = session.data.rentPayerUserId!;
+
+    // 家賃情報を保存
+    await saveRent({
+      groupId,
+      payerName,
+      payerUserId,
+      amount,
+    });
+
+    const message = `✅ 家賃を登録しました！
+
+🏠 家賃費用
+👤 ${payerName}
+💰 ¥${amount.toLocaleString()}
+
+※ 毎月の月末に自動でカレンダーに登録されます`;
+
+    await replyMessage(replyToken, message, accessToken);
+    await deleteConversationSession(userId);
+  }
+}
+
+/**
+ * @家賃変更の対話モード開始
+ */
+export async function startEditRentConversation(
+  userId: string,
+  groupId: string,
+  replyToken: string,
+  accessToken: string
+): Promise<void> {
+  const rent = await getRent();
+
+  if (!rent) {
+    await replyMessage(replyToken, `⚠️ 家賃情報が登録されていません\n\nまずは @家賃追加 で家賃情報を登録してください`, accessToken);
+    return;
+  }
+
+  const session: ConversationSession = {
+    userId,
+    groupId,
+    type: 'edit_rent',
+    step: 'rent_edit_field',
+    data: {},
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+  };
+
+  await saveConversationSession(session);
+
+  const message = `🏠 家賃情報を変更します
+
+📝 現在の家賃情報:
+👤 ${rent.payerName}
+💰 ¥${rent.amount.toLocaleString()}
+
+変更する項目を選択してください
+
+1️⃣ 支払い者
+2️⃣ 金額`;
+
+  await replyMessage(replyToken, message, accessToken);
+}
+
+/**
+ * @家賃変更の対話処理
+ */
+async function handleEditRentConversation(
+  session: ConversationSession,
+  input: string,
+  replyToken: string,
+  userId: string,
+  groupId: string,
+  accessToken: string,
+  mentions: any[]
+): Promise<void> {
+  const { step, data } = session;
+
+  if (step === 'rent_edit_field') {
+    // 変更項目選択
+    const rent = await getRent();
+    if (!rent) {
+      await replyMessage(replyToken, '❌ 家賃情報が見つかりませんでした', accessToken);
+      await deleteConversationSession(userId);
+      return;
+    }
+
+    let editField: 'payer' | 'amount' | null = null;
+
+    if (input === '1' || input.includes('支払')) {
+      editField = 'payer';
+    } else if (input === '2' || input.includes('金額')) {
+      editField = 'amount';
+    }
+
+    if (!editField) {
+      await replyMessage(replyToken, '❌ 1 または 2 を選択してください', accessToken);
+      return;
+    }
+
+    session.data.rentEditField = editField;
+    session.step = 'rent_edit_value';
+    await updateConversationSession(userId, { step: 'rent_edit_value', data: session.data });
+
+    // 項目に応じたメッセージを表示
+    if (editField === 'payer') {
+      await replyMessage(replyToken, `新しい支払い者を入力してください\n（@自分 で自分の名前、@メンションでユーザー指定）`, accessToken);
+    } else {
+      await replyMessage(replyToken, `新しい金額を入力してください（数字のみ）`, accessToken);
+    }
+  } else if (step === 'rent_edit_value') {
+    const rent = await getRent();
+    if (!rent) {
+      await replyMessage(replyToken, '❌ 家賃情報が見つかりませんでした', accessToken);
+      await deleteConversationSession(userId);
+      return;
+    }
+
+    const editField = data.rentEditField!;
+
+    if (editField === 'payer') {
+      let payerName = input.trim();
+      let payerUserId: string | undefined = undefined;
+
+      const displayName = await getUserDisplayName(groupId, userId, accessToken);
+
+      if (payerName === '@自分' || payerName === '＠自分') {
+        payerName = displayName;
+        payerUserId = userId;
+      } else if (mentions.length > 0 && (payerName.startsWith('@') || payerName.startsWith('＠'))) {
+        const mentionedUserId = mentions[0].userId;
+        payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+        payerUserId = mentionedUserId;
+      } else {
+        const existingUser = await getUserByDisplayName(payerName);
+        if (existingUser) {
+          payerUserId = existingUser.id;
+        }
+      }
+
+      if (!payerUserId) {
+        await replyMessage(
+          replyToken,
+          `❌ ユーザー「${payerName}」が見つかりませんでした。\n\n@メンション または @自分 を使用してください。`,
+          accessToken
+        );
+        return;
+      }
+
+      const originalPayer = rent.payerName;
+      await updateRent({ payerName, payerUserId });
+
+      const message = `✅ 家賃を変更しました！
+
+🏠 家賃費用
+👤 ${originalPayer} → ${payerName}
+💰 ¥${rent.amount.toLocaleString()}`;
+
+      await replyMessage(replyToken, message, accessToken);
+    } else {
+      // 金額の変更
+      const amount = parseInt(input.replace(/[,，]/g, ''), 10);
+      if (isNaN(amount) || amount <= 0) {
+        await replyMessage(replyToken, '❌ 正しい金額を入力してください', accessToken);
+        return;
+      }
+
+      const originalAmount = rent.amount;
+      await updateRent({ amount });
+
+      const message = `✅ 家賃を変更しました！
+
+🏠 家賃費用
+👤 ${rent.payerName}
+💰 ¥${originalAmount.toLocaleString()} → ¥${amount.toLocaleString()}`;
+
+      await replyMessage(replyToken, message, accessToken);
+    }
+
     await deleteConversationSession(userId);
   }
 }

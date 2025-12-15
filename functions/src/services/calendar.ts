@@ -28,6 +28,8 @@ function getColorId(category: Category | '予定'): string {
       return '4'; // コーラルピンク
     case '買い物費用':
       return '7'; // シアン
+    case '家賃費用':
+      return '5'; // バナナ（黄色）
     case '予定':
       return '10'; // バジル（緑）
     default:

@@ -3,7 +3,7 @@ import { Timestamp } from '@google-cloud/firestore';
 /**
  * カテゴリー種別
  */
-export type Category = '外食費用' | '買い物費用';
+export type Category = '外食費用' | '買い物費用' | '家賃費用';
 
 /**
  * レポート種別
@@ -157,9 +157,22 @@ export interface Subscription {
 }
 
 /**
+ * 家賃情報
+ */
+export interface Rent {
+  id: string;                    // 固定ID（'global'）
+  groupId: string;               // グループID
+  payerName: string;             // 支払い者名
+  payerUserId: string;           // 支払い者ユーザーID
+  amount: number;                // 金額
+  createdAt: Timestamp;          // 作成日時
+  updatedAt: Timestamp;          // 更新日時
+}
+
+/**
  * 対話セッションの種別
  */
-export type ConversationType = 'add_expense' | 'add_schedule' | 'delete_expense' | 'initial_setup' | 'change_settings' | 'add_subscription' | 'list_subscription' | 'delete_subscription' | 'edit_subscription';
+export type ConversationType = 'add_expense' | 'add_schedule' | 'delete_expense' | 'initial_setup' | 'change_settings' | 'add_subscription' | 'list_subscription' | 'delete_subscription' | 'edit_subscription' | 'add_rent' | 'edit_rent';
 
 /**
  * 対話セッションの状態
@@ -190,7 +203,11 @@ export type ConversationStep =
   | 'subscription_action'        // サブスクアクション選択（一覧表示後）
   | 'subscription_edit_select'   // 編集対象サブスク選択
   | 'subscription_edit_field'    // 編集項目選択
-  | 'subscription_edit_value';   // 新しい値入力
+  | 'subscription_edit_value'    // 新しい値入力
+  | 'rent_payer'                 // 家賃支払い者入力
+  | 'rent_amount'                // 家賃金額入力
+  | 'rent_edit_field'            // 家賃編集項目選択
+  | 'rent_edit_value';           // 家賃新しい値入力
 
 /**
  * 対話セッション情報
@@ -230,6 +247,11 @@ export interface ConversationSession {
     editSubscriptionId?: string;        // 編集対象サブスクID
     editField?: 'payer' | 'service' | 'amount' | 'startDate' | 'interval'; // 編集する項目
     originalValue?: string;             // 変更前の値（表示用）
+    // 家賃用
+    rentPayerName?: string;             // 家賃支払い者名
+    rentPayerUserId?: string;           // 家賃支払い者ユーザーID
+    rentAmount?: number;                // 家賃金額
+    rentEditField?: 'payer' | 'amount'; // 家賃編集する項目
   };
   createdAt: Timestamp;          // 作成日時
   expiresAt: Timestamp;          // 有効期限（10分後）
