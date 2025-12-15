@@ -184,6 +184,7 @@ export function createHelpMessage(): string {
   message += `────────────────\n`;
   message += `@サブスク一覧　一覧を表示\n`;
   message += `@サブスク追加　新規登録\n`;
+  message += `@サブスク変更　設定を変更\n`;
   message += `@サブスク削除　登録を削除\n\n`;
   message += `💡 登録時に設定する項目:\n`;
   message += `・支払い者\n`;

@@ -14,6 +14,8 @@ import {
   saveSubscription,
   getActiveSubscriptions,
   deactivateSubscription,
+  getSubscription,
+  updateSubscription,
 } from '../services/firestore.js';
 import { createCalendarEvent, createScheduleEvent, deleteCalendarEvent } from '../services/calendar.js';
 import { replyMessage, createRegistrationMessage, getUserDisplayName, createDeleteMessage } from '../services/line.js';
@@ -172,6 +174,8 @@ export async function handleConversationInput(
       await handleAddSubscriptionConversation(session, input, replyToken, userId, groupId, accessToken, mentions);
     } else if (session.type === 'delete_subscription') {
       await handleDeleteSubscriptionConversation(session, input, replyToken, userId, groupId, accessToken);
+    } else if (session.type === 'edit_subscription') {
+      await handleEditSubscriptionConversation(session, input, replyToken, userId, groupId, accessToken, mentions);
     }
     console.log(`handleConversationInput completed successfully`);
   } catch (error) {
@@ -1234,6 +1238,316 @@ async function handleDeleteSubscriptionConversation(
 📝 ${selectedSubscription.serviceName}
 👤 ${selectedSubscription.payerName}
 💰 ¥${selectedSubscription.amount.toLocaleString()}`;
+
+    await replyMessage(replyToken, message, accessToken);
+    await deleteConversationSession(userId);
+  }
+}
+
+/**
+ * @サブスク変更の対話モード開始
+ */
+export async function startEditSubscriptionConversation(
+  userId: string,
+  groupId: string,
+  replyToken: string,
+  accessToken: string
+): Promise<void> {
+  const subscriptions = await getActiveSubscriptions(groupId);
+
+  if (subscriptions.length === 0) {
+    await replyMessage(replyToken, `📋 変更できるサブスクがありません\n\n@サブスク追加 で新規登録できます`, accessToken);
+    return;
+  }
+
+  const session: ConversationSession = {
+    userId,
+    groupId,
+    type: 'edit_subscription',
+    step: 'subscription_edit_select',
+    data: {},
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+  };
+
+  await saveConversationSession(session);
+
+  let message = `✏️ 変更するサブスクを選択してください\n\n`;
+
+  subscriptions.forEach((sub, index) => {
+    const intervalDisplay = sub.intervalUnit === 'week'
+      ? (sub.intervalValue === 1 ? '毎週' : `${sub.intervalValue}週間ごと`)
+      : (sub.intervalValue === 1 ? '毎月' : `${sub.intervalValue}ヶ月ごと`);
+    message += `${index + 1}️⃣ ${sub.serviceName}（${sub.payerName}・¥${sub.amount.toLocaleString()}・${intervalDisplay}）\n`;
+  });
+
+  await replyMessage(replyToken, message, accessToken);
+}
+
+/**
+ * @サブスク変更の対話処理
+ */
+async function handleEditSubscriptionConversation(
+  session: ConversationSession,
+  input: string,
+  replyToken: string,
+  userId: string,
+  groupId: string,
+  accessToken: string,
+  mentions: any[]
+): Promise<void> {
+  const { step, data } = session;
+
+  if (step === 'subscription_edit_select') {
+    // サブスク選択
+    const subscriptions = await getActiveSubscriptions(groupId);
+    const selection = parseInt(input.trim(), 10);
+
+    if (isNaN(selection) || selection < 1 || selection > subscriptions.length) {
+      await replyMessage(replyToken, `❌ 1〜${subscriptions.length}の数字を入力してください`, accessToken);
+      return;
+    }
+
+    const selectedSubscription = subscriptions[selection - 1];
+    session.data.editSubscriptionId = selectedSubscription.id;
+    session.step = 'subscription_edit_field';
+    await updateConversationSession(userId, { step: 'subscription_edit_field', data: session.data });
+
+    // 現在の設定を表示
+    const intervalDisplay = selectedSubscription.intervalUnit === 'week'
+      ? (selectedSubscription.intervalValue === 1 ? '毎週' : `${selectedSubscription.intervalValue}週間ごと`)
+      : (selectedSubscription.intervalValue === 1 ? '毎月' : `${selectedSubscription.intervalValue}ヶ月ごと`);
+    const startDate = selectedSubscription.startDate.toDate();
+    const startDateStr = `${startDate.getFullYear()}/${startDate.getMonth() + 1}/${startDate.getDate()}`;
+
+    const message = `📝 ${selectedSubscription.serviceName}\n━━━━━━━━━━━━━━━\n現在の設定:\n👤 支払者: ${selectedSubscription.payerName}\n📝 内容: ${selectedSubscription.serviceName}\n💰 金額: ¥${selectedSubscription.amount.toLocaleString()}\n📅 開始日: ${startDateStr}\n🔄 間隔: ${intervalDisplay}\n\n変更する項目を選択してください\n\n1️⃣ 支払者\n2️⃣ 支払い内容\n3️⃣ 金額\n4️⃣ 開始日\n5️⃣ 間隔`;
+
+    await replyMessage(replyToken, message, accessToken);
+  } else if (step === 'subscription_edit_field') {
+    // 変更項目選択
+    const subscription = await getSubscription(data.editSubscriptionId!);
+    if (!subscription) {
+      await replyMessage(replyToken, '❌ サブスクが見つかりませんでした', accessToken);
+      await deleteConversationSession(userId);
+      return;
+    }
+
+    let editField: 'payer' | 'service' | 'amount' | 'startDate' | 'interval' | null = null;
+    let originalValue = '';
+
+    if (input === '1' || input.includes('支払者')) {
+      editField = 'payer';
+      originalValue = subscription.payerName;
+    } else if (input === '2' || input.includes('内容')) {
+      editField = 'service';
+      originalValue = subscription.serviceName;
+    } else if (input === '3' || input.includes('金額')) {
+      editField = 'amount';
+      originalValue = `¥${subscription.amount.toLocaleString()}`;
+    } else if (input === '4' || input.includes('開始日')) {
+      editField = 'startDate';
+      const d = subscription.startDate.toDate();
+      originalValue = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+    } else if (input === '5' || input.includes('間隔')) {
+      editField = 'interval';
+      originalValue = subscription.intervalUnit === 'week'
+        ? (subscription.intervalValue === 1 ? '毎週' : `${subscription.intervalValue}週間ごと`)
+        : (subscription.intervalValue === 1 ? '毎月' : `${subscription.intervalValue}ヶ月ごと`);
+    }
+
+    if (!editField) {
+      await replyMessage(replyToken, '❌ 1〜5の数字を入力してください', accessToken);
+      return;
+    }
+
+    session.data.editField = editField;
+    session.data.originalValue = originalValue;
+    session.step = 'subscription_edit_value';
+    await updateConversationSession(userId, { step: 'subscription_edit_value', data: session.data });
+
+    // 項目に応じたメッセージを表示
+    let promptMessage = '';
+    switch (editField) {
+      case 'payer':
+        promptMessage = `現在: ${originalValue}\n\n新しい支払者を入力してください\n（@自分 で自分の名前、@メンションでユーザー指定）`;
+        break;
+      case 'service':
+        promptMessage = `現在: ${originalValue}\n\n新しい支払い内容を入力してください`;
+        break;
+      case 'amount':
+        promptMessage = `現在: ${originalValue}\n\n新しい金額を入力してください（数字のみ）`;
+        break;
+      case 'startDate':
+        promptMessage = `現在: ${originalValue}\n\n新しい開始日を入力してください\n（例: 12/15、2024/12/15）`;
+        break;
+      case 'interval':
+        promptMessage = `現在: ${originalValue}\n\n新しい間隔を選択してください\n\n1️⃣ 毎週\n2️⃣ 2週間ごと\n3️⃣ 毎月\n4️⃣ 2ヶ月ごと\n5️⃣ 3ヶ月ごと\n6️⃣ その他`;
+        break;
+    }
+
+    await replyMessage(replyToken, promptMessage, accessToken);
+  } else if (step === 'subscription_edit_value') {
+    // 新しい値の入力処理
+    const subscription = await getSubscription(data.editSubscriptionId!);
+    if (!subscription) {
+      await replyMessage(replyToken, '❌ サブスクが見つかりませんでした', accessToken);
+      await deleteConversationSession(userId);
+      return;
+    }
+
+    const editField = data.editField!;
+    const originalValue = data.originalValue!;
+    let newValue = '';
+    let updateData: Parameters<typeof updateSubscription>[1] = {};
+
+    switch (editField) {
+      case 'payer': {
+        let payerName = input.trim();
+        let payerUserId: string | undefined = undefined;
+
+        const displayName = await getUserDisplayName(groupId, userId, accessToken);
+
+        if (payerName === '@自分' || payerName === '＠自分') {
+          payerName = displayName;
+          payerUserId = userId;
+        } else if (mentions.length > 0 && (payerName.startsWith('@') || payerName.startsWith('＠'))) {
+          const mentionedUserId = mentions[0].userId;
+          payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+          payerUserId = mentionedUserId;
+        } else {
+          const existingUser = await getUserByDisplayName(payerName);
+          if (existingUser) {
+            payerUserId = existingUser.id;
+          }
+        }
+
+        if (!payerUserId) {
+          await replyMessage(
+            replyToken,
+            `❌ ユーザー「${payerName}」が見つかりませんでした。\n\n@メンション または @自分 を使用してください。`,
+            accessToken
+          );
+          return;
+        }
+
+        updateData = { payerName, payerUserId };
+        newValue = payerName;
+        break;
+      }
+      case 'service': {
+        const serviceName = input.trim();
+        if (!serviceName || serviceName.length === 0) {
+          await replyMessage(replyToken, '❌ 支払い内容を入力してください', accessToken);
+          return;
+        }
+        updateData = { serviceName };
+        newValue = serviceName;
+        break;
+      }
+      case 'amount': {
+        const amount = parseInt(input.replace(/[,，]/g, ''), 10);
+        if (isNaN(amount) || amount <= 0) {
+          await replyMessage(replyToken, '❌ 正しい金額を入力してください', accessToken);
+          return;
+        }
+        updateData = { amount };
+        newValue = `¥${amount.toLocaleString()}`;
+        break;
+      }
+      case 'startDate': {
+        const startDate = parseSubscriptionDate(input.trim());
+        if (!startDate) {
+          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
+          return;
+        }
+        updateData = { startDate: Timestamp.fromDate(startDate) };
+        newValue = `${startDate.getFullYear()}/${startDate.getMonth() + 1}/${startDate.getDate()}`;
+        break;
+      }
+      case 'interval': {
+        let intervalUnit: 'week' | 'month';
+        let intervalValue: number;
+
+        const selection = parseInt(input.trim(), 10);
+        switch (selection) {
+          case 1:
+            intervalUnit = 'week';
+            intervalValue = 1;
+            newValue = '毎週';
+            break;
+          case 2:
+            intervalUnit = 'week';
+            intervalValue = 2;
+            newValue = '2週間ごと';
+            break;
+          case 3:
+            intervalUnit = 'month';
+            intervalValue = 1;
+            newValue = '毎月';
+            break;
+          case 4:
+            intervalUnit = 'month';
+            intervalValue = 2;
+            newValue = '2ヶ月ごと';
+            break;
+          case 5:
+            intervalUnit = 'month';
+            intervalValue = 3;
+            newValue = '3ヶ月ごと';
+            break;
+          case 6:
+            // その他の場合は追加のステップが必要だが、シンプルにするため6ヶ月ごととする
+            intervalUnit = 'month';
+            intervalValue = 6;
+            newValue = '6ヶ月ごと';
+            break;
+          default:
+            await replyMessage(replyToken, '❌ 1〜6の数字を入力してください', accessToken);
+            return;
+        }
+
+        updateData = { intervalUnit, intervalValue };
+        break;
+      }
+    }
+
+    // 更新を実行
+    await updateSubscription(data.editSubscriptionId!, updateData);
+
+    // 更新後のサブスク情報を取得して表示
+    const updatedSubscription = await getSubscription(data.editSubscriptionId!);
+    if (!updatedSubscription) {
+      await replyMessage(replyToken, '❌ サブスクの更新に失敗しました', accessToken);
+      await deleteConversationSession(userId);
+      return;
+    }
+
+    const intervalDisplay = updatedSubscription.intervalUnit === 'week'
+      ? (updatedSubscription.intervalValue === 1 ? '毎週' : `${updatedSubscription.intervalValue}週間ごと`)
+      : (updatedSubscription.intervalValue === 1 ? '毎月' : `${updatedSubscription.intervalValue}ヶ月ごと`);
+    const startDate = updatedSubscription.startDate.toDate();
+    const startDateStr = `${startDate.getFullYear()}/${startDate.getMonth() + 1}/${startDate.getDate()}`;
+
+    const fieldNames: Record<string, string> = {
+      payer: '支払者',
+      service: '支払い内容',
+      amount: '金額',
+      startDate: '開始日',
+      interval: '間隔',
+    };
+
+    const message = `✅ サブスクを変更しました
+
+📝 ${updatedSubscription.serviceName}
+━━━━━━━━━━━━━━━
+変更内容:
+　${fieldNames[editField]}: ${originalValue} → ${newValue}
+
+現在の設定:
+👤 ${updatedSubscription.payerName}
+💰 ¥${updatedSubscription.amount.toLocaleString()}
+📅 開始日: ${startDateStr}
+🔄 ${intervalDisplay}`;
 
     await replyMessage(replyToken, message, accessToken);
     await deleteConversationSession(userId);

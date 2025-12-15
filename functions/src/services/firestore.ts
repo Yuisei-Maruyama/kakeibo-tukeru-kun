@@ -522,3 +522,18 @@ export async function getAllActiveSubscriptions(): Promise<Subscription[]> {
 
   return snapshot.docs.map(doc => doc.data() as Subscription);
 }
+
+/**
+ * サブスクリプションを更新
+ */
+export async function updateSubscription(
+  subscriptionId: string,
+  updates: Partial<Omit<Subscription, 'id' | 'createdAt' | 'updatedAt'>>
+): Promise<void> {
+  const db = getFirestore();
+  await db.collection('subscriptions').doc(subscriptionId).update({
+    ...updates,
+    updatedAt: Timestamp.now(),
+  });
+  console.log(`Subscription updated: ${subscriptionId}`, updates);
+}

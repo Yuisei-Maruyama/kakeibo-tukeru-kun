@@ -159,7 +159,7 @@ export interface Subscription {
 /**
  * 対話セッションの種別
  */
-export type ConversationType = 'add_expense' | 'add_schedule' | 'delete_expense' | 'initial_setup' | 'change_settings' | 'add_subscription' | 'list_subscription' | 'delete_subscription';
+export type ConversationType = 'add_expense' | 'add_schedule' | 'delete_expense' | 'initial_setup' | 'change_settings' | 'add_subscription' | 'list_subscription' | 'delete_subscription' | 'edit_subscription';
 
 /**
  * 対話セッションの状態
@@ -187,7 +187,10 @@ export type ConversationStep =
   | 'subscription_interval_unit'  // サブスク間隔単位選択（週/月）
   | 'subscription_interval_value' // サブスク間隔数値入力
   | 'subscription_select'         // サブスク選択（削除用）
-  | 'subscription_action';        // サブスクアクション選択（一覧表示後）
+  | 'subscription_action'        // サブスクアクション選択（一覧表示後）
+  | 'subscription_edit_select'   // 編集対象サブスク選択
+  | 'subscription_edit_field'    // 編集項目選択
+  | 'subscription_edit_value';   // 新しい値入力
 
 /**
  * 対話セッション情報
@@ -223,6 +226,10 @@ export interface ConversationSession {
     subscriptionIntervalUnit?: 'week' | 'month'; // サブスク間隔単位
     subscriptionIntervalValue?: number; // サブスク間隔数値
     subscriptionId?: string;            // 削除対象サブスクID
+    // サブスク編集用
+    editSubscriptionId?: string;        // 編集対象サブスクID
+    editField?: 'payer' | 'service' | 'amount' | 'startDate' | 'interval'; // 編集する項目
+    originalValue?: string;             // 変更前の値（表示用）
   };
   createdAt: Timestamp;          // 作成日時
   expiresAt: Timestamp;          // 有効期限（10分後）

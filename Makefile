@@ -3,7 +3,7 @@
 # =============================================================================
 
 # 設定
-PROJECT_ID ?= kakeibo-line-bot
+PROJECT_ID ?= your-gcp-project-id
 REGION ?= asia-northeast1
 
 # 環境変数をエクスポート
