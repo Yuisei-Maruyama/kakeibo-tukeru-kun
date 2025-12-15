@@ -10,6 +10,10 @@
 |------|--------|
 | レシート送信回数 | 100回/月（2人で1日1-2回） |
 | 定期レポート | 2回/月（15日・月末） |
+| 毎朝の予定通知 | 30回/月（毎日7:00） |
+| カレンダー同期 | 30回/月（毎日3:00） |
+| サブスク自動登録 | 1回/月（毎月1日9:00） |
+| 家賃自動登録 | 1回/月（毎月1日9:00） |
 | テキストコマンド | 30回/月 |
 
 ### 1.2 各サービスの料金
@@ -19,15 +23,15 @@
 | **Cloud Functions** | 200万回/月 | $0.40/100万回 | **$0**（無料枠内） |
 | **Firestore** | 読取5万/日、書込2万/日 | $0.06/10万読取 | **$0**（無料枠内） |
 | **Gemini API** | 15 RPM、100万トークン/月 | $0.075/100万トークン | **$0**（無料枠内） |
-| **Cloud Scheduler** | 3ジョブまで無料 | $0.10/ジョブ/月 | **$0**（2ジョブ） |
+| **Cloud Scheduler** | 3ジョブまで無料 | $0.10/ジョブ/月 | **$0.30**（6ジョブ、3ジョブ超過分） |
 | **Secret Manager** | 6シークレット無料 | $0.06/シークレット | **$0**（4シークレット） |
 | **LINE Messaging API** | 200通/月（無料プラン） | 有料プランへ移行 | **$0**（無料枠内） |
 
 ### 1.3 想定月額コスト
 
-**通常利用（100回/月程度）: ¥0〜数円**
+**通常利用（100回/月程度）: 約¥50/月**
 
-すべて無料枠内で運用可能です。
+Cloud Scheduler の超過分（3ジョブ × $0.10 ≒ ¥45）のみ発生します。その他はすべて無料枠内で運用可能です。
 
 ---
 
@@ -197,9 +201,13 @@ gcloud alpha monitoring policies create \
 ### 7.1 課金が急増した場合
 
 ```bash
-# 1. Cloud Functions を無効化
+# 1. Cloud Functions を無効化（全6エンドポイント）
 gcloud functions delete webhook --region=asia-northeast1 --quiet
 gcloud functions delete scheduledReport --region=asia-northeast1 --quiet
+gcloud functions delete dailyScheduleNotification --region=asia-northeast1 --quiet
+gcloud functions delete calendarSync --region=asia-northeast1 --quiet
+gcloud functions delete monthlySubscriptions --region=asia-northeast1 --quiet
+gcloud functions delete monthlyRent --region=asia-northeast1 --quiet
 
 # 2. または、プロジェクト全体を停止
 gcloud projects update PROJECT_ID --no-enable-billing

@@ -1130,13 +1130,28 @@ Bot: ⚠️ 家賃情報が登録されていません
 - 24時間365日稼働
 - LINE Webhook の応答時間: 30秒以内
 
-## 4. 制約条件
+## 4. Cloud Scheduler ジョブ一覧
+
+| ジョブ名 | スケジュール | タイムゾーン | エンドポイント | 説明 |
+|---------|-------------|-------------|---------------|------|
+| `kakeibo-mid-month-report` | `0 9 15 * *` | Asia/Tokyo | `/scheduledReport` | 毎月15日 9:00 に中間集計レポートを送信 |
+| `kakeibo-end-month-report` | `0 9 28-31 * *` | Asia/Tokyo | `/scheduledReport` | 毎月28〜31日 9:00 に月末集計レポートを送信 |
+| `kakeibo-daily-schedule-notification` | `0 7 * * *` | Asia/Tokyo | `/dailyScheduleNotification` | 毎日 7:00 に当日の予定を通知 |
+| `kakeibo-calendar-sync` | `0 3 * * *` | Asia/Tokyo | `/calendarSync` | 毎日 3:00 にGoogleカレンダーをFirestoreに同期 |
+| `kakeibo-monthly-subscriptions` | `0 9 1 * *` | Asia/Tokyo | `/monthlySubscriptions` | 毎月1日 9:00 にサブスクを自動登録 |
+| `kakeibo-monthly-rent` | `0 9 1 * *` | Asia/Tokyo | `/monthlyRent` | 毎月1日 9:00 に家賃を月末日に自動登録 |
+
+**補足:**
+- すべてのジョブは `asia-northeast1` リージョンで実行
+- 認証: OIDC トークン
+
+## 5. 制約条件
 
 - LINE Messaging API の制限に準拠
 - Google Calendar API のクォータに準拠
 - Gemini API の利用制限に準拠
 
-## 5. 用語定義
+## 6. 用語定義
 
 | 用語 | 説明 |
 |------|------|

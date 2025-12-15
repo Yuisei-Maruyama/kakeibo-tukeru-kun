@@ -56,6 +56,7 @@ Cloud FunctionsとCloud Schedulerのデプロイに使用します。
 | `make deploy-scheduler` | Cloud Schedulerのみ設定 |
 | `make deploy-webhook` | Webhookハンドラーのみデプロイ |
 | `make deploy-report` | レポートハンドラーのみデプロイ |
+| `make deploy-calendar-sync` | カレンダー同期ハンドラーのみデプロイ |
 
 ### 使用例
 
@@ -65,6 +66,9 @@ make deploy
 
 # コード修正後、Webhookだけ更新
 make deploy-webhook
+
+# カレンダー同期ハンドラーだけ更新
+make deploy-calendar-sync
 
 # スケジューラーの設定だけ変更
 make deploy-scheduler
@@ -318,39 +322,41 @@ make status
 
 使用方法: make [コマンド]
 
-  setup              全ての初期設定を実行（プロジェクト作成〜シークレット登録）
-  setup-init         GCPプロジェクトを作成
-  setup-apis         必要なAPIを有効化
-  setup-firestore    Firestoreデータベースを作成
-  setup-secrets      Secret Managerにシークレットを登録
-  setup-budget       予算アラートを設定（課金超過防止）
-  deploy             全てデプロイ（Cloud Functions + Cloud Scheduler）
-  deploy-functions   Cloud Functionsのみデプロイ
-  deploy-scheduler   Cloud Schedulerのみ設定
-  deploy-webhook     Webhookハンドラーのみデプロイ
-  deploy-report      スケジューラーハンドラーのみデプロイ
-  install            依存関係をインストール
-  build              TypeScriptをビルド
-  dev                ローカル開発サーバーを起動
-  lint               Lintを実行
-  test               テストを実行
-  logs               Webhookのログを表示（最新50件）
-  logs-report        スケジューラーのログを表示（最新50件）
-  logs-tail          Webhookのログをリアルタイム表示
-  status             デプロイ状況を確認
-  url                Webhook URLを表示
-  clean              ビルド成果物を削除
-  open-console       GCPコンソールを開く
-  open-billing       GCP請求ダッシュボードを開く
-  open-line          LINE Developersコンソールを開く
-  open-calendar      Googleカレンダーを開く
-  cost               今月のコストを確認
-  emergency-stop     緊急停止（全Cloud Functionsを削除）
-  pause-scheduler    スケジューラーを一時停止
-  resume-scheduler   スケジューラーを再開
+  setup               全ての初期設定を実行（プロジェクト作成〜シークレット登録）
+  setup-init          GCPプロジェクトを作成
+  setup-apis          必要なAPIを有効化
+  setup-firestore     Firestoreデータベースを作成
+  setup-secrets       Secret Managerにシークレットを登録
+  setup-budget        予算アラートを設定（課金超過防止）
+  deploy              全てデプロイ（Cloud Functions + Cloud Scheduler）
+  deploy-functions    Cloud Functionsのみデプロイ
+  deploy-scheduler    Cloud Schedulerのみ設定
+  deploy-webhook      Webhookハンドラーのみデプロイ
+  deploy-report       スケジューラーハンドラーのみデプロイ
+  deploy-calendar-sync カレンダー同期ハンドラーのみデプロイ
+  install             依存関係をインストール
+  build               TypeScriptをビルド
+  dev                 ローカル開発サーバーを起動
+  lint                Lintを実行
+  test                テストを実行
+  logs                Webhookのログを表示（最新50件）
+  logs-report         スケジューラーのログを表示（最新50件）
+  logs-tail           Webhookのログをリアルタイム表示
+  status              デプロイ状況を確認
+  url                 Webhook URLを表示
+  clean               ビルド成果物を削除
+  pull-cloud-functions Cloud Functionsのソースをローカルに取得
+  open-console        GCPコンソールを開く
+  open-billing        GCP請求ダッシュボードを開く
+  open-line           LINE Developersコンソールを開く
+  open-calendar       Googleカレンダーを開く
+  cost                今月のコストを確認
+  emergency-stop      緊急停止（全Cloud Functionsを削除）
+  pause-scheduler     スケジューラーを一時停止
+  resume-scheduler    スケジューラーを再開
 
 環境変数:
-  PROJECT_ID=kakeibo-line-bot
+  PROJECT_ID=your-gcp-project-id
   REGION=asia-northeast1
 
 例: PROJECT_ID=my-project make deploy

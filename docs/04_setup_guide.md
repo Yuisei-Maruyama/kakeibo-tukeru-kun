@@ -256,6 +256,9 @@ make deploy-webhook
 
 # スケジューラーハンドラーのみデプロイ
 make deploy-report
+
+# カレンダー同期ハンドラーのみデプロイ
+make deploy-calendar-sync
 ```
 
 **環境変数でカスタマイズ:**
@@ -336,6 +339,50 @@ gcloud scheduler jobs create http kakeibo-end-month-report \
   --http-method=POST \
   --headers="Content-Type=application/json" \
   --message-body='{"reportType":"end-month"}' \
+  --oidc-service-account-email="scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com"
+
+# 毎朝の予定通知ジョブ
+gcloud scheduler jobs create http kakeibo-daily-schedule-notification \
+  --location=asia-northeast1 \
+  --schedule="0 7 * * *" \
+  --time-zone="Asia/Tokyo" \
+  --uri="https://asia-northeast1-kakeibo-line-bot.cloudfunctions.net/dailyScheduleNotification" \
+  --http-method=POST \
+  --headers="Content-Type=application/json" \
+  --message-body='{"type":"daily-schedule"}' \
+  --oidc-service-account-email="scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com"
+
+# カレンダー同期ジョブ（毎日深夜3時に実行）
+gcloud scheduler jobs create http kakeibo-calendar-sync \
+  --location=asia-northeast1 \
+  --schedule="0 3 * * *" \
+  --time-zone="Asia/Tokyo" \
+  --uri="https://asia-northeast1-kakeibo-line-bot.cloudfunctions.net/calendarSync" \
+  --http-method=POST \
+  --headers="Content-Type=application/json" \
+  --message-body='{"type":"calendar-sync"}' \
+  --oidc-service-account-email="scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com"
+
+# サブスク自動登録ジョブ（毎月1日9時に実行）
+gcloud scheduler jobs create http kakeibo-monthly-subscriptions \
+  --location=asia-northeast1 \
+  --schedule="0 9 1 * *" \
+  --time-zone="Asia/Tokyo" \
+  --uri="https://asia-northeast1-kakeibo-line-bot.cloudfunctions.net/monthlySubscriptions" \
+  --http-method=POST \
+  --headers="Content-Type=application/json" \
+  --message-body='{"type":"monthly-subscriptions"}' \
+  --oidc-service-account-email="scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com"
+
+# 家賃自動登録ジョブ（毎月1日9時に実行）
+gcloud scheduler jobs create http kakeibo-monthly-rent \
+  --location=asia-northeast1 \
+  --schedule="0 9 1 * *" \
+  --time-zone="Asia/Tokyo" \
+  --uri="https://asia-northeast1-kakeibo-line-bot.cloudfunctions.net/monthlyRent" \
+  --http-method=POST \
+  --headers="Content-Type=application/json" \
+  --message-body='{"type":"monthly-rent"}' \
   --oidc-service-account-email="scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com"
 ```
 
