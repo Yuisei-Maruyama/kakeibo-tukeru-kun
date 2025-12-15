@@ -40,6 +40,8 @@ usage() {
     echo "  report        スケジューラーハンドラーのみデプロイ"
     echo "  schedule      予定通知ハンドラーのみデプロイ"
     echo "  calendar-sync カレンダー同期ハンドラーのみデプロイ"
+    echo "  subscriptions サブスク自動登録ハンドラーのみデプロイ"
+    echo "  rent          家賃自動登録ハンドラーのみデプロイ"
     echo ""
     echo "Environment Variables:"
     echo "  PROJECT_ID  GCP プロジェクトID (default: kakeibo-line-bot)"
@@ -147,6 +149,50 @@ deploy_calendar_sync() {
     log_info "カレンダー同期ハンドラーのデプロイ完了"
 }
 
+# サブスク自動登録ハンドラーのデプロイ
+deploy_monthly_subscriptions() {
+    log_info "サブスク自動登録ハンドラーをデプロイ中..."
+
+    gcloud functions deploy monthlySubscriptions \
+        --gen2 \
+        --runtime=nodejs20 \
+        --region="${REGION}" \
+        --source="${FUNCTIONS_DIR}" \
+        --entry-point=monthlySubscriptions \
+        --trigger-http \
+        --no-allow-unauthenticated \
+        --memory=256MB \
+        --timeout=120s \
+        --max-instances=2 \
+        --min-instances=0 \
+        --set-env-vars=TZ=Asia/Tokyo \
+        --set-secrets="LINE_CHANNEL_ACCESS_TOKEN=LINE_CHANNEL_ACCESS_TOKEN:latest,GOOGLE_CALENDAR_ID=GOOGLE_CALENDAR_ID:latest"
+
+    log_info "サブスク自動登録ハンドラーのデプロイ完了"
+}
+
+# 家賃自動登録ハンドラーのデプロイ
+deploy_monthly_rent() {
+    log_info "家賃自動登録ハンドラーをデプロイ中..."
+
+    gcloud functions deploy monthlyRent \
+        --gen2 \
+        --runtime=nodejs20 \
+        --region="${REGION}" \
+        --source="${FUNCTIONS_DIR}" \
+        --entry-point=monthlyRent \
+        --trigger-http \
+        --no-allow-unauthenticated \
+        --memory=256MB \
+        --timeout=120s \
+        --max-instances=2 \
+        --min-instances=0 \
+        --set-env-vars=TZ=Asia/Tokyo \
+        --set-secrets="LINE_CHANNEL_ACCESS_TOKEN=LINE_CHANNEL_ACCESS_TOKEN:latest,GOOGLE_CALENDAR_ID=GOOGLE_CALENDAR_ID:latest"
+
+    log_info "家賃自動登録ハンドラーのデプロイ完了"
+}
+
 # Cloud Functions デプロイ
 deploy_functions() {
     log_info "Cloud Functions をデプロイ中..."
@@ -154,6 +200,8 @@ deploy_functions() {
     deploy_report
     deploy_daily_schedule
     deploy_calendar_sync
+    deploy_monthly_subscriptions
+    deploy_monthly_rent
     log_info "全ての Cloud Functions デプロイ完了"
 }
 
@@ -184,6 +232,16 @@ create_scheduler_service_account() {
         --quiet >&2 || true
 
     gcloud functions add-invoker-policy-binding calendarSync \
+        --region="${REGION}" \
+        --member="serviceAccount:${SA_EMAIL}" \
+        --quiet >&2 || true
+
+    gcloud functions add-invoker-policy-binding monthlySubscriptions \
+        --region="${REGION}" \
+        --member="serviceAccount:${SA_EMAIL}" \
+        --quiet >&2 || true
+
+    gcloud functions add-invoker-policy-binding monthlyRent \
         --region="${REGION}" \
         --member="serviceAccount:${SA_EMAIL}" \
         --quiet >&2 || true
@@ -277,6 +335,54 @@ setup_scheduler() {
         --oidc-service-account-email="${SA_EMAIL}" \
         --oidc-token-audience="${FUNCTION_URL_SCHEDULE}"
 
+    # 毎月1日のサブスク自動登録ジョブ
+    log_info "サブスク自動登録ジョブを設定中..."
+    local FUNCTION_URL_SUBSCRIPTIONS="https://${REGION}-${PROJECT_ID}.cloudfunctions.net/monthlySubscriptions"
+
+    # 既存ジョブを削除（存在する場合）
+    if gcloud scheduler jobs describe kakeibo-monthly-subscriptions --location="${REGION}" &>/dev/null; then
+        log_info "既存ジョブを削除中..."
+        gcloud scheduler jobs delete kakeibo-monthly-subscriptions \
+            --location="${REGION}" \
+            --quiet
+    fi
+
+    # 新規作成（毎月1日9:00に実行）
+    gcloud scheduler jobs create http kakeibo-monthly-subscriptions \
+        --location="${REGION}" \
+        --schedule="0 9 1 * *" \
+        --time-zone="Asia/Tokyo" \
+        --uri="${FUNCTION_URL_SUBSCRIPTIONS}" \
+        --http-method=POST \
+        --headers="Content-Type=application/json" \
+        --message-body='{"type":"monthly-subscriptions"}' \
+        --oidc-service-account-email="${SA_EMAIL}" \
+        --oidc-token-audience="${FUNCTION_URL_SUBSCRIPTIONS}"
+
+    # 毎月1日の家賃自動登録ジョブ
+    log_info "家賃自動登録ジョブを設定中..."
+    local FUNCTION_URL_RENT="https://${REGION}-${PROJECT_ID}.cloudfunctions.net/monthlyRent"
+
+    # 既存ジョブを削除（存在する場合）
+    if gcloud scheduler jobs describe kakeibo-monthly-rent --location="${REGION}" &>/dev/null; then
+        log_info "既存ジョブを削除中..."
+        gcloud scheduler jobs delete kakeibo-monthly-rent \
+            --location="${REGION}" \
+            --quiet
+    fi
+
+    # 新規作成（毎月1日9:00に実行）
+    gcloud scheduler jobs create http kakeibo-monthly-rent \
+        --location="${REGION}" \
+        --schedule="0 9 1 * *" \
+        --time-zone="Asia/Tokyo" \
+        --uri="${FUNCTION_URL_RENT}" \
+        --http-method=POST \
+        --headers="Content-Type=application/json" \
+        --message-body='{"type":"monthly-rent"}' \
+        --oidc-service-account-email="${SA_EMAIL}" \
+        --oidc-token-audience="${FUNCTION_URL_RENT}"
+
     log_info "Cloud Scheduler 設定完了"
     echo ""
     log_info "設定されたジョブ:"
@@ -313,6 +419,12 @@ main() {
             ;;
         calendar-sync)
             deploy_calendar_sync
+            ;;
+        subscriptions)
+            deploy_monthly_subscriptions
+            ;;
+        rent)
+            deploy_monthly_rent
             ;;
         *)
             log_error "不明なコマンド: $1"
