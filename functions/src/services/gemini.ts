@@ -1,5 +1,5 @@
-import { GoogleGenAI } from '@google/genai';
-import { GeminiAnalysisResult } from '../types/index.js';
+import { GoogleGenAI } from "@google/genai";
+import { GeminiAnalysisResult } from "../types/index.js";
 
 /**
  * Gemini APIクライアント
@@ -49,16 +49,17 @@ export async function analyzeReceiptImage(
 店舗名から以下の2つのカテゴリーに分類してください:
 
 ■ 外食費用
-  - レストラン、飲食店、カフェ、ファストフード等での食事
-  - 例: イタリアンレストラン、ラーメン屋、居酒屋、スターバックス、マクドナルド、吉野家
+  - レストラン、飲食店、ファストフード等での食事
+  - 例: イタリアンレストラン、ラーメン屋、居酒屋、マクドナルド、吉野家、寿司屋、和食屋
 
 ■ 買い物費用
-  - スーパー、コンビニ、ドラッグストア、ECサイト等での購入
-  - 例: イオン、セブンイレブン、ローソン、ファミリーマート、マツモトキヨシ、Amazon
+  - スーパー、コンビニ、ドラッグストア、ECサイト、カフェ等での購入
+  - 例: イオン、セブンイレブン、ローソン、ファミリーマート、マツモトキヨシ、Amazon、スターバックス、ドトール、タリーズ
 
 【判定のポイント】
 - ファミリーマート、セブンイレブン、ローソン等は買い物費用
-- レストラン名、カフェ名、飲食店名は外食費用
+- カフェ（スターバックス、ドトール、タリーズ等）は買い物費用
+- レストラン名、飲食店名は外食費用
 - 迷った場合は店舗の主な業態で判断
 
 【重要】
@@ -74,16 +75,16 @@ export async function analyzeReceiptImage(
 }`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: "gemini-3-flash-preview",
       contents: [
         {
-          role: 'user',
+          role: "user",
           parts: [
             { text: prompt },
             {
               inlineData: {
-                data: imageBuffer.toString('base64'),
-                mimeType: 'image/jpeg',
+                data: imageBuffer.toString("base64"),
+                mimeType: "image/jpeg",
               },
             },
           ],
@@ -91,43 +92,52 @@ export async function analyzeReceiptImage(
       ],
     });
 
-    const text = response.text ?? '';
+    const text = response.text ?? "";
 
     // JSONを抽出（```jsonブロックがある場合も対応）
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error('JSON形式のレスポンスが取得できませんでした');
+      throw new Error("JSON形式のレスポンスが取得できませんでした");
     }
 
     const analysisResult: GeminiAnalysisResult = JSON.parse(jsonMatch[0]);
 
     // エラーチェック
     if (analysisResult.error) {
-      console.error('Gemini analysis error:', analysisResult.error, analysisResult.reason);
+      console.error(
+        "Gemini analysis error:",
+        analysisResult.error,
+        analysisResult.reason
+      );
       return analysisResult;
     }
 
     // 必須フィールドの検証
-    if (!analysisResult.date || !analysisResult.amount || !analysisResult.category || !analysisResult.storeName) {
-      throw new Error('必須フィールドが不足しています');
+    if (
+      !analysisResult.date ||
+      !analysisResult.amount ||
+      !analysisResult.category ||
+      !analysisResult.storeName
+    ) {
+      throw new Error("必須フィールドが不足しています");
     }
 
     return analysisResult;
   } catch (error) {
-    console.error('Failed to analyze receipt image:', error);
-    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
-    const errorStack = error instanceof Error ? error.stack : '';
-    console.error('Gemini API error details:', {
+    console.error("Failed to analyze receipt image:", error);
+    const errorMsg = error instanceof Error ? error.message : "不明なエラー";
+    const errorStack = error instanceof Error ? error.stack : "";
+    console.error("Gemini API error details:", {
       message: errorMsg,
       stack: errorStack,
       errorType: error instanceof Error ? error.constructor.name : typeof error,
     });
     return {
-      date: '',
+      date: "",
       amount: 0,
-      category: '外食費用',
-      storeName: '',
-      error: '画像を解析できませんでした',
+      category: "外食費用",
+      storeName: "",
+      error: "画像を解析できませんでした",
       reason: errorMsg,
     };
   }

@@ -171,6 +171,9 @@ export function createHelpMessage(): string {
   message += `@予定 名前 内容\n`;
   message += `@予定 名前 内容 日付\n`;
   message += `@予定 名前 内容 日付 開始 終了\n\n`;
+  message += `💡 複数人の場合（カンマ区切り）:\n`;
+  message += `@予定 田中,鈴木 会議\n`;
+  message += `@予定 @自分,田中 打合せ 12/20\n\n`;
 
   // 削除
   message += `🗑️ 支出を削除する\n`;

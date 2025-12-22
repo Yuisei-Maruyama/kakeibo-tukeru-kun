@@ -752,6 +752,7 @@ async function handleAddCommand(
 
 /**
  * 予定コマンド処理
+ * 複数人対応: カンマ区切りでユーザー名を指定可能（例: 田中,鈴木 会議）
  */
 async function handleScheduleCommand(
   replyToken: string,
@@ -763,19 +764,19 @@ async function handleScheduleCommand(
   mentions: any[] = []
 ): Promise<void> {
   try {
-    // 引数をパース（例: "田中 会議" または "田中 会議 12/15" または "田中 会議 12/15 14:30 16:00"）
+    // 引数をパース（例: "田中 会議" または "田中,鈴木 会議 12/15" または "田中 会議 12/15 14:30 16:00"）
     const parts = args.split(' ').filter(p => p.length > 0);
 
     if (parts.length < 2) {
       await replyMessage(
         replyToken,
-        '❌ 形式が正しくありません\n\n使い方: @予定 {ユーザー名} {予定内容} [{日付}] [{開始時間}] [{終了時間}]\n例: @予定 田中 会議\n例: @予定 @自分 会議\n例: @予定 田中 会議 12/15\n例: @予定 田中 会議 12/15 14:30 16:00',
+        '❌ 形式が正しくありません\n\n使い方: @予定 {ユーザー名} {予定内容} [{日付}] [{開始時間}] [{終了時間}]\n※ユーザー名はカンマ区切りで複数人指定可能\n\n例: @予定 田中 会議\n例: @予定 田中,鈴木 会議\n例: @予定 @自分 会議\n例: @予定 田中 会議 12/15\n例: @予定 田中,鈴木 会議 12/15 14:30 16:00',
         accessToken
       );
       return;
     }
 
-    let userName = parts[0];
+    const userNamesInput = parts[0];
     const scheduleContent = parts[1];
     const dateInput = parts.length >= 3 ? parts[2] : null;
     const startTimeInput = parts.length >= 4 ? parts[3] : null;
@@ -784,15 +785,40 @@ async function handleScheduleCommand(
     // LINEからコマンド実行者の表示名を取得
     const displayName = await getUserDisplayName(groupId, userId, accessToken);
 
-    // @自分が指定された場合は、送信者の名前を使用
-    if (userName === '@自分') {
-      userName = displayName;
+    // カンマ区切りでユーザー名をパース
+    const userNameParts = userNamesInput.split(',').map(name => name.trim()).filter(name => name.length > 0);
+    const resolvedUserNames: string[] = [];
+
+    // メンションのインデックス
+    let mentionIndex = 0;
+
+    for (const namePart of userNameParts) {
+      if (namePart === '@自分') {
+        // @自分が指定された場合は、送信者の名前を使用
+        resolvedUserNames.push(displayName);
+      } else if (namePart.startsWith('@') && mentions.length > mentionIndex) {
+        // メンションされたユーザーがいる場合、その表示名を取得
+        const mentionedUserId = mentions[mentionIndex].userId;
+        const mentionedName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+        resolvedUserNames.push(mentionedName);
+        mentionIndex++;
+      } else if (!namePart.startsWith('@')) {
+        // 通常のユーザー名
+        resolvedUserNames.push(namePart);
+      }
     }
-    // メンションされたユーザーがいる場合、その表示名を取得
-    else if (mentions.length > 0 && userName.startsWith('@')) {
-      const mentionedUserId = mentions[0].userId;
-      userName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+
+    if (resolvedUserNames.length === 0) {
+      await replyMessage(
+        replyToken,
+        '❌ ユーザー名を指定してください',
+        accessToken
+      );
+      return;
     }
+
+    // 複数人の場合はカンマ区切りで結合
+    const userName = resolvedUserNames.join('、');
 
     // 日付をパース（予定は未来の日付のみ許可）
     let scheduleDate: Date;
