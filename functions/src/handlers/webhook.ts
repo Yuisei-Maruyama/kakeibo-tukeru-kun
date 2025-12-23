@@ -268,6 +268,22 @@ async function handleTextMessage(
     return;
   }
 
+  // ユーザーメンションのみの場合は無視（LINEの@メンション機能）
+  // メンションがある場合、そのメンションがテキストの先頭にあるかチェック
+  if (mentions.length > 0) {
+    const firstMention = mentions[0];
+    // メンションがテキストの先頭（index 0）から始まっている場合はユーザーメンション
+    if (firstMention.index === 0) {
+      // メンションだけ、またはメンション+空白のみの場合は無視
+      const mentionLength = firstMention.length || 0;
+      const afterMention = text.slice(mentionLength).trim();
+      if (afterMention === '' || mentions.length > 1) {
+        // 純粋なユーザーメンションなので無視
+        return;
+      }
+    }
+  }
+
   try {
     // 全角・半角スペースを統一（全て半角スペースに変換）
     const normalizedText = text.slice(1).trim().replace(/　/g, ' ');
