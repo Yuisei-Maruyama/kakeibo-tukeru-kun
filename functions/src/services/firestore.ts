@@ -420,6 +420,39 @@ export async function expenseExistsByCalendarEventId(
 }
 
 /**
+ * カレンダーイベントIDで支出を取得
+ */
+export async function getExpenseByCalendarEventId(
+  calendarEventId: string
+): Promise<Expense | null> {
+  const db = getFirestore();
+  const snapshot = await db
+    .collection('expenses')
+    .where('calendarEventId', '==', calendarEventId)
+    .limit(1)
+    .get();
+
+  if (snapshot.empty) {
+    return null;
+  }
+
+  const doc = snapshot.docs[0];
+  return { id: doc.id, ...doc.data() } as Expense;
+}
+
+/**
+ * 支出を更新
+ */
+export async function updateExpense(
+  expenseId: string,
+  updates: Partial<Omit<Expense, 'id'>>
+): Promise<void> {
+  const db = getFirestore();
+  await db.collection('expenses').doc(expenseId).update(updates);
+  console.log(`Expense updated: ${expenseId}`);
+}
+
+/**
  * ユーザー名から対応するユーザーIDを取得
  * 完全一致で見つからない場合は、あいまい検索（部分一致）を試みる
  */
@@ -620,4 +653,44 @@ export async function updateRent(
     updatedAt: Timestamp.now(),
   });
   console.log('Rent updated:', updates);
+}
+
+/**
+ * calendarEventIdがない支出を検索（日付・金額・カテゴリー・ユーザーでマッチング）
+ * 手動入力された支出とカレンダーイベントを紐付けるために使用
+ */
+export async function findExpenseWithoutCalendarEventId(
+  userId: string,
+  date: Date,
+  amount: number,
+  category: Category
+): Promise<Expense | null> {
+  const db = getFirestore();
+  const startOfDay = new Date(date);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(date);
+  endOfDay.setHours(23, 59, 59, 999);
+
+  // userIdとcategoryでフィルタ
+  const snapshot = await db
+    .collection('expenses')
+    .where('userId', '==', userId)
+    .where('category', '==', category)
+    .get();
+
+  // JavaScriptで日付・金額・calendarEventIdをフィルタ
+  const matchingDocs = snapshot.docs.filter(doc => {
+    const expense = doc.data() as Expense;
+    const expenseDate = expense.date.toDate();
+    return expenseDate >= startOfDay &&
+           expenseDate <= endOfDay &&
+           expense.amount === amount &&
+           !expense.calendarEventId; // calendarEventIdがないものだけ
+  });
+
+  if (matchingDocs.length === 0) {
+    return null;
+  }
+
+  return matchingDocs[0].data() as Expense;
 }

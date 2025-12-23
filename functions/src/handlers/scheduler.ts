@@ -1,6 +1,6 @@
 import { Request, Response } from '@google-cloud/functions-framework';
 import { Timestamp } from '@google-cloud/firestore';
-import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, expenseExistsByCalendarEventId, getUserIdByDisplayName, saveExpense, updateDiningBalance, getUser, getAllActiveSubscriptions, getRent } from '../services/firestore.js';
+import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, getExpenseByCalendarEventId, getUserIdByDisplayName, saveExpense, updateDiningBalance, getUser, getAllActiveSubscriptions, getRent, updateExpense, findExpenseWithoutCalendarEventId } from '../services/firestore.js';
 import { pushMessage, createReportMessage } from '../services/line.js';
 import { getTodaySchedules, getMonthlyExpenseEvents, createCalendarEvent } from '../services/calendar.js';
 import { ReportData, ReportType, UserExpenses, MonthlySummary } from '../types/index.js';
@@ -332,6 +332,7 @@ function formatDate(date: Date): string {
 /**
  * Googleカレンダー同期ハンドラー
  * Googleカレンダーの当月の支出イベントをFirestoreに同期
+ * 既存イベントは内容が変更されていれば更新する
  */
 export async function handleCalendarSync(_req: Request, res: Response): Promise<void> {
   try {
@@ -354,20 +355,76 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
     const expenseEvents = await getMonthlyExpenseEvents(calendarId, year, month);
 
     let syncedCount = 0;
+    let updatedCount = 0;
     let skippedCount = 0;
     let errorCount = 0;
 
     // 各イベントをFirestoreに同期
     for (const event of expenseEvents) {
       try {
-        // カレンダーイベントIDで既存チェック
-        const exists = await expenseExistsByCalendarEventId(event.eventId);
-        if (exists) {
-          console.log(`Event already exists: ${event.eventId}`);
-          skippedCount++;
+        // カレンダーイベントIDで既存の支出を取得
+        const existingExpense = await getExpenseByCalendarEventId(event.eventId);
+
+        if (existingExpense) {
+          // 既存イベントがある場合、内容が変更されているかチェック
+          const hasChanges =
+            existingExpense.amount !== event.amount ||
+            existingExpense.userName !== event.userName ||
+            existingExpense.category !== event.category ||
+            existingExpense.storeName !== event.storeName;
+
+          if (hasChanges) {
+            // ユーザー名からユーザーIDを取得
+            const userId = await getUserIdByDisplayName(event.userName);
+            if (!userId) {
+              console.warn(`User not found for update: ${event.userName}`);
+              errorCount++;
+              continue;
+            }
+
+            // 外食費用の残高調整（旧金額を戻して新金額を引く）
+            if (existingExpense.category === '外食費用' || event.category === '外食費用') {
+              const oldUserId = existingExpense.userId;
+              const oldUser = await getUser(oldUserId);
+
+              // 旧カテゴリーが外食費用なら残高を戻す
+              if (existingExpense.category === '外食費用' && oldUser) {
+                const restoredBalance = oldUser.diningBalance + existingExpense.amount;
+                await updateDiningBalance(oldUserId, restoredBalance);
+                console.log(`Restored dining balance for ${existingExpense.userName}: +${existingExpense.amount}`);
+              }
+
+              // 新カテゴリーが外食費用なら残高を引く
+              if (event.category === '外食費用') {
+                const newUser = await getUser(userId);
+                if (newUser) {
+                  const newBalance = newUser.diningBalance - event.amount;
+                  await updateDiningBalance(userId, newBalance);
+                  console.log(`Updated dining balance for ${event.userName}: -${event.amount}`);
+                }
+              }
+            }
+
+            // 支出を更新
+            await updateExpense(existingExpense.id!, {
+              userId,
+              userName: event.userName,
+              amount: event.amount,
+              category: event.category,
+              storeName: event.storeName,
+              date: Timestamp.fromDate(new Date(event.date)),
+            });
+
+            console.log(`Updated event: ${event.eventId} - ${event.userName} ¥${event.amount}`);
+            updatedCount++;
+          } else {
+            console.log(`Event unchanged: ${event.eventId}`);
+            skippedCount++;
+          }
           continue;
         }
 
+        // 新規イベントの場合
         // ユーザー名からユーザーIDを取得
         const userId = await getUserIdByDisplayName(event.userName);
         if (!userId) {
@@ -376,7 +433,25 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
           continue;
         }
 
-        // Firestoreに保存
+        // 手動入力済みの支出（calendarEventIdなし）が存在するかチェック
+        const manualExpense = await findExpenseWithoutCalendarEventId(
+          userId,
+          new Date(event.date),
+          event.amount,
+          event.category
+        );
+
+        if (manualExpense) {
+          // 手動入力済みの支出にcalendarEventIdを紐付けるだけ（残高は減算しない）
+          await updateExpense(manualExpense.id!, {
+            calendarEventId: event.eventId,
+          });
+          console.log(`Linked calendar event to manual expense: ${event.eventId} - ${event.userName} ¥${event.amount}`);
+          skippedCount++; // 紐付けのみなのでskippedとしてカウント
+          continue;
+        }
+
+        // 完全に新規のイベント：Firestoreに保存
         await saveExpense({
           userId,
           userName: event.userName,
@@ -405,11 +480,12 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
       }
     }
 
-    console.log(`Calendar sync completed: ${syncedCount} synced, ${skippedCount} skipped, ${errorCount} errors`);
+    console.log(`Calendar sync completed: ${syncedCount} synced, ${updatedCount} updated, ${skippedCount} skipped, ${errorCount} errors`);
 
     res.status(200).json({
       status: 'ok',
       synced: syncedCount,
+      updated: updatedCount,
       skipped: skippedCount,
       errors: errorCount,
       total: expenseEvents.length,

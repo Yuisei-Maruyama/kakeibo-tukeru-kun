@@ -337,6 +337,31 @@ setup_scheduler() {
         --oidc-token-audience="${FUNCTION_URL_SCHEDULE}" \
         --description="毎朝7:00に当日のGoogleカレンダー予定をLINEに通知"
 
+    # 毎日3:00のカレンダー同期ジョブ
+    log_info "カレンダー同期ジョブを設定中..."
+    local FUNCTION_URL_CALENDAR_SYNC="https://${REGION}-${PROJECT_ID}.cloudfunctions.net/calendarSync"
+
+    # 既存ジョブを削除（存在する場合）
+    if gcloud scheduler jobs describe kakeibo-calendar-sync --location="${REGION}" &>/dev/null; then
+        log_info "既存ジョブを削除中..."
+        gcloud scheduler jobs delete kakeibo-calendar-sync \
+            --location="${REGION}" \
+            --quiet
+    fi
+
+    # 新規作成（毎日3:00に実行）
+    gcloud scheduler jobs create http kakeibo-calendar-sync \
+        --location="${REGION}" \
+        --schedule="0 3 * * *" \
+        --time-zone="Asia/Tokyo" \
+        --uri="${FUNCTION_URL_CALENDAR_SYNC}" \
+        --http-method=POST \
+        --headers="Content-Type=application/json" \
+        --message-body='{"type":"calendar-sync"}' \
+        --oidc-service-account-email="${SA_EMAIL}" \
+        --oidc-token-audience="${FUNCTION_URL_CALENDAR_SYNC}" \
+        --description="毎日3:00にGoogleカレンダーの支出イベントをFirestoreに同期"
+
     # 毎月1日のサブスク自動登録ジョブ
     log_info "サブスク自動登録ジョブを設定中..."
     local FUNCTION_URL_SUBSCRIPTIONS="https://${REGION}-${PROJECT_ID}.cloudfunctions.net/monthlySubscriptions"
