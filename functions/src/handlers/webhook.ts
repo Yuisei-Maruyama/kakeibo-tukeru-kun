@@ -9,7 +9,7 @@ import { analyzeReceiptImage } from '../services/gemini.js';
 import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession, getUserByDisplayNamePartial } from '../services/firestore.js';
 import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '../services/calendar.js';
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
-import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation } from './conversation.js';
+import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation } from './conversation.js';
 import { generateReportData, getReportPeriod } from './scheduler.js';
 
 /**
@@ -381,6 +381,10 @@ async function handleTextMessage(
     // @家賃変更コマンド
     else if (command === '家賃変更') {
       await startEditRentConversation(userId, groupId, replyToken, accessToken);
+    }
+    // @旅行コマンド
+    else if (command === '旅行') {
+      await startAddTravelConversation(userId, groupId, replyToken, accessToken);
     }
     // @キャンセルコマンド
     else if (command === 'キャンセル') {

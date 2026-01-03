@@ -3,7 +3,7 @@ import { Timestamp } from '@google-cloud/firestore';
 /**
  * カテゴリー種別
  */
-export type Category = '外食費用' | '買い物費用' | '家賃費用';
+export type Category = '外食費用' | '買い物費用' | '旅行費用' | '家賃費用';
 
 /**
  * レポート種別
@@ -76,6 +76,7 @@ export interface ReportData {
   };
   diningExpenses: UserExpenses[];     // 外食費用
   shoppingExpenses: UserExpenses[];   // 買い物費用
+  travelExpenses: UserExpenses[];     // 旅行費用
   currentPayer?: string;         // 現在の外食担当者名
   monthlySummary?: MonthlySummary;    // 月間サマリー（月末のみ）
 }
@@ -96,6 +97,7 @@ export interface UserExpenses {
 export interface MonthlySummary {
   diningSavings: UserSavings[];       // 外食費用の貯金
   shoppingSettlement: Settlement;     // 買い物費用の精算
+  travelSettlement: Settlement;       // 旅行費用の精算
 }
 
 /**
@@ -172,7 +174,7 @@ export interface Rent {
 /**
  * 対話セッションの種別
  */
-export type ConversationType = 'add_expense' | 'add_schedule' | 'delete_expense' | 'initial_setup' | 'change_settings' | 'add_subscription' | 'list_subscription' | 'delete_subscription' | 'edit_subscription' | 'add_rent' | 'edit_rent';
+export type ConversationType = 'add_expense' | 'add_schedule' | 'delete_expense' | 'initial_setup' | 'change_settings' | 'add_subscription' | 'list_subscription' | 'delete_subscription' | 'edit_subscription' | 'add_rent' | 'edit_rent' | 'add_travel';
 
 /**
  * 対話セッションの状態
@@ -207,7 +209,13 @@ export type ConversationStep =
   | 'rent_payer'                 // 家賃支払い者入力
   | 'rent_amount'                // 家賃金額入力
   | 'rent_edit_field'            // 家賃編集項目選択
-  | 'rent_edit_value';           // 家賃新しい値入力
+  | 'rent_edit_value'            // 家賃新しい値入力
+  | 'travel_input_method'        // 旅行費用登録方法選択（画像 or 手動）
+  | 'travel_wait_image'          // 旅行費用画像待機中
+  | 'travel_payer_name'          // 旅行費用支払い者名入力
+  | 'travel_amount'              // 旅行費用金額入力
+  | 'travel_date'                // 旅行費用日付入力
+  | 'travel_store_name';         // 旅行費用支払い内容入力
 
 /**
  * 対話セッション情報
@@ -252,6 +260,13 @@ export interface ConversationSession {
     rentPayerUserId?: string;           // 家賃支払い者ユーザーID
     rentAmount?: number;                // 家賃金額
     rentEditField?: 'payer' | 'amount'; // 家賃編集する項目
+    // 旅行用
+    travelInputMethod?: 'image' | 'manual'; // 旅行費用登録方法
+    travelPayerName?: string;           // 旅行費用支払い者名
+    travelPayerUserId?: string;         // 旅行費用支払い者ユーザーID
+    travelAmount?: number;              // 旅行費用金額
+    travelDate?: string;                // 旅行費用日付（YYYY-MM-DD形式）
+    travelStoreName?: string;           // 旅行費用支払い内容
   };
   createdAt: Timestamp;          // 作成日時
   expiresAt: Timestamp;          // 有効期限（10分後）

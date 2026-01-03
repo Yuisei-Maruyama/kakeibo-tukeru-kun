@@ -113,6 +113,7 @@ export async function generateReportData(
   // ユーザー別・カテゴリー別の支出を集計
   const diningExpenses: UserExpenses[] = [];
   const shoppingExpenses: UserExpenses[] = [];
+  const travelExpenses: UserExpenses[] = [];
 
   for (const user of users) {
     const userExpenses = expensesSummary.get(user.id);
@@ -132,6 +133,14 @@ export async function generateReportData(
       userId: user.id,
       userName: user.displayName,
       total: shoppingTotal,
+    });
+
+    // 旅行費用
+    const travelTotal = userExpenses?.get('旅行費用') || 0;
+    travelExpenses.push({
+      userId: user.id,
+      userName: user.displayName,
+      total: travelTotal,
     });
   }
 
@@ -155,6 +164,7 @@ export async function generateReportData(
     },
     diningExpenses,
     shoppingExpenses,
+    travelExpenses,
     currentPayer,
   };
 
@@ -208,21 +218,51 @@ async function generateMonthlySummary(
     };
   });
 
-  // 精算額を計算
-  const amounts = shoppingTotals.map(u => u.total);
-  const difference = Math.abs(amounts[0] - amounts[1]);
-  const refundAmount = Math.round(difference / 2);
+  // 買い物費用の精算額を計算
+  const shoppingAmounts = shoppingTotals.map(u => u.total);
+  const shoppingDifference = Math.abs(shoppingAmounts[0] - shoppingAmounts[1]);
+  const shoppingRefundAmount = Math.round(shoppingDifference / 2);
 
-  let refundFrom: string | undefined;
-  let refundTo: string | undefined;
+  let shoppingRefundFrom: string | undefined;
+  let shoppingRefundTo: string | undefined;
 
-  if (refundAmount > 0) {
-    if (amounts[0] < amounts[1]) {
-      refundFrom = shoppingTotals[0].userName;
-      refundTo = shoppingTotals[1].userName;
+  if (shoppingRefundAmount > 0) {
+    if (shoppingAmounts[0] < shoppingAmounts[1]) {
+      shoppingRefundFrom = shoppingTotals[0].userName;
+      shoppingRefundTo = shoppingTotals[1].userName;
     } else {
-      refundFrom = shoppingTotals[1].userName;
-      refundTo = shoppingTotals[0].userName;
+      shoppingRefundFrom = shoppingTotals[1].userName;
+      shoppingRefundTo = shoppingTotals[0].userName;
+    }
+  }
+
+  // 旅行費用の精算を計算
+  const travelTotals = users.map(user => {
+    const userExpenses = expensesSummary.get(user.id);
+    const travelTotal = userExpenses?.get('旅行費用') || 0;
+
+    return {
+      userId: user.id,
+      userName: user.displayName,
+      total: travelTotal,
+    };
+  });
+
+  // 旅行費用の精算額を計算
+  const travelAmounts = travelTotals.map(u => u.total);
+  const travelDifference = Math.abs(travelAmounts[0] - travelAmounts[1]);
+  const travelRefundAmount = Math.round(travelDifference / 2);
+
+  let travelRefundFrom: string | undefined;
+  let travelRefundTo: string | undefined;
+
+  if (travelRefundAmount > 0) {
+    if (travelAmounts[0] < travelAmounts[1]) {
+      travelRefundFrom = travelTotals[0].userName;
+      travelRefundTo = travelTotals[1].userName;
+    } else {
+      travelRefundFrom = travelTotals[1].userName;
+      travelRefundTo = travelTotals[0].userName;
     }
   }
 
@@ -230,10 +270,17 @@ async function generateMonthlySummary(
     diningSavings,
     shoppingSettlement: {
       users: shoppingTotals,
-      difference,
-      refundFrom,
-      refundTo,
-      refundAmount,
+      difference: shoppingDifference,
+      refundFrom: shoppingRefundFrom,
+      refundTo: shoppingRefundTo,
+      refundAmount: shoppingRefundAmount,
+    },
+    travelSettlement: {
+      users: travelTotals,
+      difference: travelDifference,
+      refundFrom: travelRefundFrom,
+      refundTo: travelRefundTo,
+      refundAmount: travelRefundAmount,
     },
   };
 }

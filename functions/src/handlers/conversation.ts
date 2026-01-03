@@ -85,7 +85,8 @@ export async function startAddExpenseConversation(
 
 カテゴリーを選択してください
 1️⃣ 外食費用
-2️⃣ 買い物費用`;
+2️⃣ 買い物費用
+3️⃣ 旅行費用`;
 
   await replyMessage(replyToken, message, accessToken);
 }
@@ -143,7 +144,8 @@ export async function startDeleteExpenseConversation(
   const message = `🗑️ 削除する内容を選択してください
 
 1️⃣ 外食費用
-2️⃣ 買い物費用`;
+2️⃣ 買い物費用
+3️⃣ 旅行費用`;
 
   await replyMessage(replyToken, message, accessToken);
 }
@@ -183,6 +185,8 @@ export async function handleConversationInput(
       await handleAddRentConversation(session, input, replyToken, userId, groupId, accessToken, mentions);
     } else if (session.type === 'edit_rent') {
       await handleEditRentConversation(session, input, replyToken, userId, groupId, accessToken, mentions);
+    } else if (session.type === 'add_travel') {
+      await handleAddTravelConversation(session, input, replyToken, userId, groupId, accessToken, calendarId, mentions);
     }
     console.log(`handleConversationInput completed successfully`);
   } catch (error) {
@@ -220,10 +224,12 @@ async function handleAddExpenseConversation(
       category = '外食費用';
     } else if (input === '2' || input.includes('買い物')) {
       category = '買い物費用';
+    } else if (input === '3' || input.includes('旅行')) {
+      category = '旅行費用';
     }
 
     if (!category) {
-      await replyMessage(replyToken, '❌ 1 または 2 を選択してください', accessToken);
+      await replyMessage(replyToken, '❌ 1、2、または 3 を選択してください', accessToken);
       return;
     }
 
@@ -626,10 +632,12 @@ async function handleDeleteExpenseConversation(
       deleteCategory = '外食費用';
     } else if (input === '2' || input.includes('買い物')) {
       deleteCategory = '買い物費用';
+    } else if (input === '3' || input.includes('旅行')) {
+      deleteCategory = '旅行費用';
     }
 
     if (!deleteCategory) {
-      await replyMessage(replyToken, '❌ 1 または 2 を選択してください', accessToken);
+      await replyMessage(replyToken, '❌ 1、2、または 3 を選択してください', accessToken);
       return;
     }
 
@@ -1846,6 +1854,229 @@ async function handleEditRentConversation(
       await replyMessage(replyToken, message, accessToken);
     }
 
+    await deleteConversationSession(userId);
+  }
+}
+
+// =============================================================================
+// 旅行費用関連
+// =============================================================================
+
+/**
+ * @旅行の対話モード開始
+ */
+export async function startAddTravelConversation(
+  userId: string,
+  groupId: string,
+  replyToken: string,
+  accessToken: string
+): Promise<void> {
+  const session: ConversationSession = {
+    userId,
+    groupId,
+    type: 'add_travel',
+    step: 'travel_input_method',
+    data: {},
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+  };
+
+  await saveConversationSession(session);
+
+  const message = `🧳 旅行費用を登録します
+
+支払い内容の登録方法を選択してください
+1️⃣ 画像を送信して自動解析
+2️⃣ 手動で入力`;
+
+  await replyMessage(replyToken, message, accessToken);
+}
+
+/**
+ * @旅行の対話処理
+ */
+async function handleAddTravelConversation(
+  session: ConversationSession,
+  input: string,
+  replyToken: string,
+  userId: string,
+  groupId: string,
+  accessToken: string,
+  calendarId: string,
+  mentions: any[]
+): Promise<void> {
+  const { step, data } = session;
+
+  if (step === 'travel_input_method') {
+    let inputMethod: 'image' | 'manual' | null = null;
+    if (input === '1' || input.includes('画像')) {
+      inputMethod = 'image';
+    } else if (input === '2' || input.includes('手動')) {
+      inputMethod = 'manual';
+    }
+
+    if (!inputMethod) {
+      await replyMessage(replyToken, '❌ 1 または 2 を選択してください', accessToken);
+      return;
+    }
+
+    session.data.travelInputMethod = inputMethod;
+
+    if (inputMethod === 'image') {
+      session.step = 'travel_wait_image';
+      await updateConversationSession(userId, { step: 'travel_wait_image', data: session.data });
+
+      await replyMessage(
+        replyToken,
+        '📸 レシート・チケット・予約確認画面などの画像を送信してください\n（画像送信後、自動的に解析して登録します）',
+        accessToken
+      );
+    } else {
+      session.step = 'travel_payer_name';
+      await updateConversationSession(userId, { step: 'travel_payer_name', data: session.data });
+
+      await replyMessage(
+        replyToken,
+        '支払い者名を入力してください\n（@自分 で自分の名前、@メンションでユーザー指定）',
+        accessToken
+      );
+    }
+  } else if (step === 'travel_payer_name') {
+    let payerName = input.trim();
+    let payerUserId: string | undefined = undefined;
+
+    const displayName = await getUserDisplayName(groupId, userId, accessToken);
+
+    if (payerName === '@自分' || payerName === '＠自分') {
+      payerName = displayName;
+      payerUserId = userId;
+    } else if (mentions.length > 0 && (payerName.startsWith('@') || payerName.startsWith('＠'))) {
+      const mentionedUserId = mentions[0].userId;
+      payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+      payerUserId = mentionedUserId;
+    } else {
+      const existingUser = await getUserByDisplayName(payerName);
+      if (existingUser) {
+        payerUserId = existingUser.id;
+      }
+    }
+
+    if (!payerUserId) {
+      await replyMessage(
+        replyToken,
+        `❌ ユーザー「${payerName}」が見つかりませんでした。\n\n@メンション または @自分 を使用してください。`,
+        accessToken
+      );
+      return;
+    }
+
+    session.data.travelPayerName = payerName;
+    session.data.travelPayerUserId = payerUserId;
+    session.step = 'travel_amount';
+    await updateConversationSession(userId, { step: 'travel_amount', data: session.data });
+
+    await replyMessage(replyToken, '金額を入力してください（数字のみ）', accessToken);
+  } else if (step === 'travel_amount') {
+    const amount = parseInt(input.replace(/[,，]/g, ''), 10);
+    if (isNaN(amount) || amount <= 0) {
+      await replyMessage(replyToken, '❌ 正しい金額を入力してください', accessToken);
+      return;
+    }
+
+    session.data.travelAmount = amount;
+    session.step = 'travel_date';
+    await updateConversationSession(userId, { step: 'travel_date', data: session.data });
+
+    const currentYear = new Date().getFullYear();
+    await replyMessage(
+      replyToken,
+      `日付を入力してください\n（例: 12/15、2024/12/15）\n日付形式:\n- M/D: 今年の日付（例: 5/22 → ${currentYear}/5/22）\n- YYYY/M/D: 年を指定（例: 2024/5/22）\n「今日」と入力すると今日の日付になります`,
+      accessToken
+    );
+  } else if (step === 'travel_date') {
+    let travelDate: Date;
+    if (input === '今日') {
+      travelDate = new Date();
+    } else {
+      const dateParts = input.split('/');
+      if (dateParts.length === 3) {
+        const year = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10);
+        const day = parseInt(dateParts[2], 10);
+        travelDate = new Date(year, month - 1, day);
+
+        if (isNaN(travelDate.getTime()) || travelDate.getMonth() !== month - 1) {
+          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
+          return;
+        }
+      } else if (dateParts.length === 2) {
+        const month = parseInt(dateParts[0], 10);
+        const day = parseInt(dateParts[1], 10);
+        const year = new Date().getFullYear();
+        travelDate = new Date(year, month - 1, day);
+
+        if (isNaN(travelDate.getTime()) || travelDate.getMonth() !== month - 1) {
+          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
+          return;
+        }
+      } else {
+        await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
+        return;
+      }
+    }
+
+    const dateStr = `${travelDate.getFullYear()}-${String(travelDate.getMonth() + 1).padStart(2, '0')}-${String(travelDate.getDate()).padStart(2, '0')}`;
+    session.data.travelDate = dateStr;
+    session.step = 'travel_store_name';
+    await updateConversationSession(userId, { step: 'travel_store_name', data: session.data });
+
+    await replyMessage(
+      replyToken,
+      '支払い内容を入力してください\n（例: 新幹線代、ホテル代、お土産代）\n「なし」と入力すると詳細なしで登録されます',
+      accessToken
+    );
+  } else if (step === 'travel_store_name') {
+    let storeName = input.trim();
+    if (storeName === 'なし' || storeName === 'ナシ') {
+      storeName = '手動入力';
+    }
+
+    const payerName = data.travelPayerName!;
+    const payerUserId = data.travelPayerUserId!;
+    const amount = data.travelAmount!;
+    const dateStr = data.travelDate!;
+
+    const payerDisplayName = await getUserDisplayName(groupId, payerUserId, accessToken);
+    const payerUser = await getOrCreateUser(payerUserId, payerDisplayName, groupId);
+
+    const calendarEventId = await createCalendarEvent(
+      calendarId,
+      payerUser.displayName,
+      amount,
+      '旅行費用',
+      storeName,
+      dateStr
+    );
+
+    await saveExpense({
+      userId: payerUser.id,
+      userName: payerName,
+      amount,
+      category: '旅行費用',
+      storeName,
+      date: Timestamp.fromDate(new Date(dateStr)),
+      calendarEventId,
+    });
+
+    const responseMessage = createRegistrationMessage(
+      '旅行費用',
+      amount,
+      payerName,
+      storeName,
+      dateStr
+    );
+
+    await replyMessage(replyToken, responseMessage, accessToken);
     await deleteConversationSession(userId);
   }
 }

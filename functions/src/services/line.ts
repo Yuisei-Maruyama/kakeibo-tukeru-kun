@@ -106,6 +106,8 @@ export function createRegistrationMessage(
     message += `💰 ${userName}の外食残高: ￥${balance.toLocaleString()}`;
   } else if (category === '買い物費用') {
     message += `🛒 買い物費用として登録されました`;
+  } else if (category === '旅行費用') {
+    message += `🧳 旅行費用として登録されました`;
   }
 
   return message;
@@ -154,6 +156,9 @@ export function createHelpMessage(): string {
   message += `────────────────\n`;
   message += `@追加\n`;
   message += `　→ 対話形式で登録できます\n\n`;
+  message += `@旅行\n`;
+  message += `　→ 旅行費用を登録できます\n`;
+  message += `　　 画像解析 or 手動入力\n\n`;
   message += `一括入力の場合:\n`;
   message += `@追加 外食費用 名前 金額\n`;
   message += `@追加 外食費用 名前 金額 日付\n\n`;
@@ -249,7 +254,7 @@ export function createBudgetUpdateMessage(newBudget: number): string {
  * 集計レポートメッセージを生成
  */
 export function createReportMessage(reportData: ReportData): string {
-  const { period, diningExpenses, shoppingExpenses, currentPayer, monthlySummary } = reportData;
+  const { period, diningExpenses, shoppingExpenses, travelExpenses, currentPayer, monthlySummary } = reportData;
 
   let message = `📊 家計簿レポート（${formatDate(period.start)}〜${formatDate(period.end)}）\n`;
 
@@ -273,7 +278,14 @@ export function createReportMessage(reportData: ReportData): string {
     message += `${userExp.userName}: ￥${userExp.total.toLocaleString()}\n`;
   }
   const shoppingTotal = shoppingExpenses.reduce((sum, u) => sum + u.total, 0);
-  message += `合計: ￥${shoppingTotal.toLocaleString()}`;
+  message += `合計: ￥${shoppingTotal.toLocaleString()}\n`;
+
+  message += `\n【🧳 旅行費用】\n`;
+  for (const userExp of travelExpenses) {
+    message += `${userExp.userName}: ￥${userExp.total.toLocaleString()}\n`;
+  }
+  const travelTotal = travelExpenses.reduce((sum, u) => sum + u.total, 0);
+  message += `合計: ￥${travelTotal.toLocaleString()}`;
 
   // 月末の場合は月間サマリーを追加
   if (monthlySummary) {
@@ -294,6 +306,18 @@ export function createReportMessage(reportData: ReportData): string {
 
     if (monthlySummary.shoppingSettlement.refundFrom && monthlySummary.shoppingSettlement.refundTo) {
       message += `\n→ ${monthlySummary.shoppingSettlement.refundFrom}が${monthlySummary.shoppingSettlement.refundTo}に ￥${monthlySummary.shoppingSettlement.refundAmount.toLocaleString()} を返金してください🙏`;
+    } else {
+      message += `\n✅ 精算の必要はありません`;
+    }
+
+    message += `\n\n【🧳 旅行費用 - 精算】\n`;
+    for (const user of monthlySummary.travelSettlement.users) {
+      message += `${user.userName} 合計: ￥${user.total.toLocaleString()}\n`;
+    }
+    message += `差額: ￥${monthlySummary.travelSettlement.difference.toLocaleString()}\n`;
+
+    if (monthlySummary.travelSettlement.refundFrom && monthlySummary.travelSettlement.refundTo) {
+      message += `\n→ ${monthlySummary.travelSettlement.refundFrom}が${monthlySummary.travelSettlement.refundTo}に ￥${monthlySummary.travelSettlement.refundAmount.toLocaleString()} を返金してください🙏`;
     } else {
       message += `\n✅ 精算の必要はありません`;
     }

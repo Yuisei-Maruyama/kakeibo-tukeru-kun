@@ -28,6 +28,8 @@ function getColorId(category: Category | '予定'): string {
       return '4'; // コーラルピンク
     case '買い物費用':
       return '7'; // シアン
+    case '旅行費用':
+      return '1'; // ラベンダー（紫）
     case '家賃費用':
       return '5'; // バナナ（黄色）
     case '予定':
@@ -338,7 +340,7 @@ export async function getTodaySchedules(
  * カレンダーイベントのタイトルから支出情報をパース
  */
 export interface ParsedExpenseEvent {
-  category: '外食費用' | '買い物費用';
+  category: '外食費用' | '買い物費用' | '旅行費用';
   userName: string;
   amount: number;
   storeName: string;
@@ -360,10 +362,10 @@ export function parseExpenseEventTitle(
     // パターン4: カテゴリー ユーザー名 ¥金額 (店舗名)
     // パターン5: カテゴリー ユーザー名 金額 (店舗名)
     // パターン6: カテゴリー ユーザー名 金額円 (店舗名)
-    // カテゴリーは部分一致（外食、外食費、買い物、買物）
+    // カテゴリーは部分一致（外食、外食費、買い物、買物、旅行、旅行費）
     // 店舗名はすべてオプション
 
-    let category: '外食費用' | '買い物費用' | null = null;
+    let category: '外食費用' | '買い物費用' | '旅行費用' | null = null;
     let userName = '';
     let amount = 0;
     let storeName = '手動追加';
@@ -371,17 +373,20 @@ export function parseExpenseEventTitle(
     // カテゴリーを抽出（柔軟な部分一致）
     // 外食費用: 外食、外食費を含む
     // 買い物費用: 買い物、買物を含む
+    // 旅行費用: 旅行、旅行費を含む
     if (summary.includes('外食')) {
       category = '外食費用';
     } else if (summary.includes('買い物') || summary.includes('買物')) {
       category = '買い物費用';
+    } else if (summary.includes('旅行')) {
+      category = '旅行費用';
     }
 
     // カテゴリーが判定できない場合は完全一致を試みる
     if (!category) {
-      const exactMatch = summary.match(/\[?(外食費用|買い物費用)\]?/);
+      const exactMatch = summary.match(/\[?(外食費用|買い物費用|旅行費用)\]?/);
       if (exactMatch) {
-        category = exactMatch[1] as '外食費用' | '買い物費用';
+        category = exactMatch[1] as '外食費用' | '買い物費用' | '旅行費用';
       } else {
         console.warn(`No category found in event: ${summary}`);
         return null;
@@ -398,6 +403,9 @@ export function parseExpenseEventTitle(
     } else if (category === '買い物費用') {
       // [買い物費用]、買い物費用、[買い物]、買い物、[買物]、買物 を除去
       afterCategory = afterCategory.replace(/\[?(買い物費用|買い物|買物)\]?\s*/, '');
+    } else if (category === '旅行費用') {
+      // [旅行費用]、旅行費用、[旅行費]、旅行費、[旅行]、旅行 を除去
+      afterCategory = afterCategory.replace(/\[?(旅行費用|旅行費|旅行)\]?\s*/, '');
     }
 
     afterCategory = afterCategory.trim();
@@ -491,7 +499,7 @@ export function parseExpenseEventTitle(
 }
 
 /**
- * 当月の支出イベントを取得（外食費用・買い物費用）
+ * 当月の支出イベントを取得（外食費用・買い物費用・旅行費用）
  */
 export async function getMonthlyExpenseEvents(
   calendarId: string,
