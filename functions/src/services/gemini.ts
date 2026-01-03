@@ -26,8 +26,21 @@ export async function analyzeReceiptImage(
   try {
     const ai = initializeGemini(apiKey);
 
+    // 今日の日付を取得してプロンプトに含める
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const todayJP = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日`;
+
     const prompt = `あなたはレシートや支払い画面を解析する専門家です。
 以下の画像から支出情報を抽出し、必ずJSON形式で出力してください。
+
+【重要：今日の日付】
+今日は ${todayJP}（${todayStr}）です。
+画像に「今日」「昨日」「一昨日」などの相対的な日付表記がある場合は、今日の日付を基準に計算してください。
+- 「今日」= ${todayStr}
+- 「昨日」= 今日の1日前
+- 「一昨日」= 今日の2日前
+- 時刻（例：「昨日 22:22」）は時刻情報として扱い、日付は相対表記から計算してください。
 
 【対応する画像】
 - 紙のレシート

@@ -661,7 +661,7 @@ async function handleDeleteExpenseConversation(
 
     await replyMessage(
       replyToken,
-      `削除する支出の日付を入力してください\n（例: 12/15）\n「今日」と入力すると今日の日付になります`,
+      `削除する支出の日付を入力してください\n（例: 12/15、2024/12/15）\n日付形式:\n- M/D: 今年の日付（例: 5/22 → ${new Date().getFullYear()}/5/22）\n- YYYY/M/D: 年を指定（例: 2024/5/22）\n「今日」と入力すると今日の日付になります`,
       accessToken
     );
   } else if (step === 'delete_date') {
@@ -669,19 +669,32 @@ async function handleDeleteExpenseConversation(
     if (input === '今日') {
       deleteDate = new Date();
     } else {
+      // YYYY/M/D または M/D 形式に対応
       const dateParts = input.split('/');
-      if (dateParts.length === 2) {
+      if (dateParts.length === 3) {
+        // YYYY/M/D 形式
+        const year = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10);
+        const day = parseInt(dateParts[2], 10);
+        deleteDate = new Date(year, month - 1, day);
+
+        if (isNaN(deleteDate.getTime()) || deleteDate.getMonth() !== month - 1) {
+          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
+          return;
+        }
+      } else if (dateParts.length === 2) {
+        // M/D 形式（今年として扱う）
         const month = parseInt(dateParts[0], 10);
         const day = parseInt(dateParts[1], 10);
         const year = new Date().getFullYear();
         deleteDate = new Date(year, month - 1, day);
 
-        if (isNaN(deleteDate.getTime())) {
-          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15', accessToken);
+        if (isNaN(deleteDate.getTime()) || deleteDate.getMonth() !== month - 1) {
+          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
           return;
         }
       } else {
-        await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15', accessToken);
+        await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
         return;
       }
     }
