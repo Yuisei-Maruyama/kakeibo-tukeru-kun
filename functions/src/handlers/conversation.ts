@@ -1,6 +1,6 @@
 import { Timestamp } from '@google-cloud/firestore';
 import { ConversationSession, Category } from '../types/index.js';
-import { parseDateString } from '../utils/date.js';
+import { parseDateString, getJSTDate } from '../utils/date.js';
 import {
   saveConversationSession,
   updateConversationSession,
@@ -25,7 +25,7 @@ import { createCalendarEvent, createScheduleEvent, deleteCalendarEvent } from '.
 import { replyMessage, createRegistrationMessage, getUserDisplayName, createDeleteMessage } from '../services/line.js';
 
 /**
- * 日付文字列（M/D形式）をパースして未来の日付を返す
+ * 日付文字列（M/D形式）をパースして未来の日付を返す（JST）
  * 過去の日付になる場合は翌年に調整
  */
 function parseFutureDate(input: string): Date | null {
@@ -41,20 +41,21 @@ function parseFutureDate(input: string): Date | null {
     return null;
   }
 
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  let year = now.getFullYear();
+  // JST の現在時刻を取得
+  const jstDate = getJSTDate();
+  const todayUTC = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate()));
+  let year = jstDate.getUTCFullYear();
 
-  let date = new Date(year, month - 1, day);
+  let date = new Date(Date.UTC(year, month - 1, day));
 
   // 過去の日付の場合は翌年に調整
-  if (date < today) {
+  if (date < todayUTC) {
     year++;
-    date = new Date(year, month - 1, day);
+    date = new Date(Date.UTC(year, month - 1, day));
   }
 
   // 日付が有効かチェック（例: 2/30 は無効）
-  if (isNaN(date.getTime()) || date.getMonth() !== month - 1) {
+  if (isNaN(date.getTime()) || date.getUTCMonth() !== month - 1) {
     return null;
   }
 
@@ -287,7 +288,7 @@ async function handleAddExpenseConversation(
     session.step = 'date';
     await updateConversationSession(userId, { step: 'date', data: session.data });
 
-    const currentYear = new Date().getFullYear();
+    const currentYear = getJSTDate().getUTCFullYear();
     await replyMessage(
       replyToken,
       `日付を入力してください\n（例: 12/15、2024/12/15）\n日付形式:\n- M/D: 今年の日付（例: 5/22 → ${currentYear}/5/22）\n- YYYY/M/D: 年を指定（例: 2024/5/22）\n「今日」と入力すると今日の日付になります`,
@@ -296,7 +297,8 @@ async function handleAddExpenseConversation(
   } else if (step === 'date') {
     let expenseDate: Date;
     if (input === '今日') {
-      expenseDate = new Date();
+      const jstDate = getJSTDate();
+      expenseDate = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), 0, 0, 0, 0));
     } else {
       const parsedDate = parseDateString(input);
       if (!parsedDate) {
@@ -487,7 +489,7 @@ async function handleAddScheduleConversation(
       throw updateError;
     }
 
-    const currentYear = new Date().getFullYear();
+    const currentYear = getJSTDate().getUTCFullYear();
     await replyMessage(
       replyToken,
       `日付を入力してください\n（例: 12/15、2024/12/15）\n日付形式:\n- M/D: 今年の日付（例: 5/22 → ${currentYear}/5/22）\n- YYYY/M/D: 年を指定（例: 2024/5/22）\n「今日」と入力すると今日の日付になります`,
@@ -497,7 +499,8 @@ async function handleAddScheduleConversation(
   } else if (step === 'date') {
     let scheduleDate: Date;
     if (input === '今日') {
-      scheduleDate = new Date();
+      const jstDate = getJSTDate();
+      scheduleDate = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), 0, 0, 0, 0));
     } else {
       // 日付をパース（年指定にも対応）
       const parsedDate = parseDateString(input);
@@ -669,15 +672,17 @@ async function handleDeleteExpenseConversation(
     session.step = 'delete_date';
     await updateConversationSession(userId, { step: 'delete_date', data: session.data });
 
+    const currentYear = getJSTDate().getUTCFullYear();
     await replyMessage(
       replyToken,
-      `削除する支出の日付を入力してください\n（例: 12/15、2024/12/15）\n日付形式:\n- M/D: 今年の日付（例: 5/22 → ${new Date().getFullYear()}/5/22）\n- YYYY/M/D: 年を指定（例: 2024/5/22）\n「今日」と入力すると今日の日付になります`,
+      `削除する支出の日付を入力してください\n（例: 12/15、2024/12/15）\n日付形式:\n- M/D: 今年の日付（例: 5/22 → ${currentYear}/5/22）\n- YYYY/M/D: 年を指定（例: 2024/5/22）\n「今日」と入力すると今日の日付になります`,
       accessToken
     );
   } else if (step === 'delete_date') {
     let deleteDate: Date;
     if (input === '今日') {
-      deleteDate = new Date();
+      const jstDate = getJSTDate();
+      deleteDate = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), 0, 0, 0, 0));
     } else {
       // YYYY/M/D または M/D 形式に対応
       const dateParts = input.split('/');
@@ -686,9 +691,9 @@ async function handleDeleteExpenseConversation(
         const year = parseInt(dateParts[0], 10);
         const month = parseInt(dateParts[1], 10);
         const day = parseInt(dateParts[2], 10);
-        deleteDate = new Date(year, month - 1, day);
+        deleteDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 
-        if (isNaN(deleteDate.getTime()) || deleteDate.getMonth() !== month - 1) {
+        if (isNaN(deleteDate.getTime()) || deleteDate.getUTCMonth() !== month - 1) {
           await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
           return;
         }
@@ -696,10 +701,11 @@ async function handleDeleteExpenseConversation(
         // M/D 形式（今年として扱う）
         const month = parseInt(dateParts[0], 10);
         const day = parseInt(dateParts[1], 10);
-        const year = new Date().getFullYear();
-        deleteDate = new Date(year, month - 1, day);
+        const jstDate = getJSTDate();
+        const year = jstDate.getUTCFullYear();
+        deleteDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 
-        if (isNaN(deleteDate.getTime()) || deleteDate.getMonth() !== month - 1) {
+        if (isNaN(deleteDate.getTime()) || deleteDate.getUTCMonth() !== month - 1) {
           await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
           return;
         }
@@ -709,7 +715,7 @@ async function handleDeleteExpenseConversation(
       }
     }
 
-    const dateStr = `${deleteDate.getFullYear()}-${String(deleteDate.getMonth() + 1).padStart(2, '0')}-${String(deleteDate.getDate()).padStart(2, '0')}`;
+    const dateStr = `${deleteDate.getUTCFullYear()}-${String(deleteDate.getUTCMonth() + 1).padStart(2, '0')}-${String(deleteDate.getUTCDate()).padStart(2, '0')}`;
     session.data.deleteDate = dateStr;
     session.step = 'delete_amount';
     await updateConversationSession(userId, { step: 'delete_amount', data: session.data });
@@ -1128,7 +1134,7 @@ async function handleAddSubscriptionConversation(
 }
 
 /**
- * サブスク用の日付パース（M/D または YYYY/M/D形式）
+ * サブスク用の日付パース（M/D または YYYY/M/D形式）（JST）
  */
 function parseSubscriptionDate(input: string): Date | null {
   // YYYY/M/D または YYYY-M-D 形式
@@ -1137,8 +1143,8 @@ function parseSubscriptionDate(input: string): Date | null {
     const year = parseInt(fullMatch[1], 10);
     const month = parseInt(fullMatch[2], 10);
     const day = parseInt(fullMatch[3], 10);
-    const date = new Date(year, month - 1, day);
-    if (!isNaN(date.getTime()) && date.getMonth() === month - 1) {
+    const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    if (!isNaN(date.getTime()) && date.getUTCMonth() === month - 1) {
       return date;
     }
     return null;
@@ -1149,9 +1155,10 @@ function parseSubscriptionDate(input: string): Date | null {
   if (shortMatch) {
     const month = parseInt(shortMatch[1], 10);
     const day = parseInt(shortMatch[2], 10);
-    const year = new Date().getFullYear();
-    const date = new Date(year, month - 1, day);
-    if (!isNaN(date.getTime()) && date.getMonth() === month - 1) {
+    const jstDate = getJSTDate();
+    const year = jstDate.getUTCFullYear();
+    const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    if (!isNaN(date.getTime()) && date.getUTCMonth() === month - 1) {
       return date;
     }
     return null;
@@ -1989,7 +1996,7 @@ async function handleAddTravelConversation(
     session.step = 'travel_date';
     await updateConversationSession(userId, { step: 'travel_date', data: session.data });
 
-    const currentYear = new Date().getFullYear();
+    const currentYear = getJSTDate().getUTCFullYear();
     await replyMessage(
       replyToken,
       `日付を入力してください\n（例: 12/15、2024/12/15）\n日付形式:\n- M/D: 今年の日付（例: 5/22 → ${currentYear}/5/22）\n- YYYY/M/D: 年を指定（例: 2024/5/22）\n「今日」と入力すると今日の日付になります`,
@@ -1998,26 +2005,28 @@ async function handleAddTravelConversation(
   } else if (step === 'travel_date') {
     let travelDate: Date;
     if (input === '今日') {
-      travelDate = new Date();
+      const jstDate = getJSTDate();
+      travelDate = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), 0, 0, 0, 0));
     } else {
       const dateParts = input.split('/');
       if (dateParts.length === 3) {
         const year = parseInt(dateParts[0], 10);
         const month = parseInt(dateParts[1], 10);
         const day = parseInt(dateParts[2], 10);
-        travelDate = new Date(year, month - 1, day);
+        travelDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 
-        if (isNaN(travelDate.getTime()) || travelDate.getMonth() !== month - 1) {
+        if (isNaN(travelDate.getTime()) || travelDate.getUTCMonth() !== month - 1) {
           await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
           return;
         }
       } else if (dateParts.length === 2) {
         const month = parseInt(dateParts[0], 10);
         const day = parseInt(dateParts[1], 10);
-        const year = new Date().getFullYear();
-        travelDate = new Date(year, month - 1, day);
+        const jstDate = getJSTDate();
+        const year = jstDate.getUTCFullYear();
+        travelDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 
-        if (isNaN(travelDate.getTime()) || travelDate.getMonth() !== month - 1) {
+        if (isNaN(travelDate.getTime()) || travelDate.getUTCMonth() !== month - 1) {
           await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
           return;
         }
@@ -2027,7 +2036,7 @@ async function handleAddTravelConversation(
       }
     }
 
-    const dateStr = `${travelDate.getFullYear()}-${String(travelDate.getMonth() + 1).padStart(2, '0')}-${String(travelDate.getDate()).padStart(2, '0')}`;
+    const dateStr = `${travelDate.getUTCFullYear()}-${String(travelDate.getUTCMonth() + 1).padStart(2, '0')}-${String(travelDate.getUTCDate()).padStart(2, '0')}`;
     session.data.travelDate = dateStr;
     session.step = 'travel_store_name';
     await updateConversationSession(userId, { step: 'travel_store_name', data: session.data });

@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { GeminiAnalysisResult } from "../types/index.js";
+import { getJSTDate } from "../utils/date.js";
 
 /**
  * Gemini APIクライアント
@@ -26,10 +27,10 @@ export async function analyzeReceiptImage(
   try {
     const ai = initializeGemini(apiKey);
 
-    // 今日の日付を取得してプロンプトに含める
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    const todayJP = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日`;
+    // 今日のJST日付を取得してプロンプトに含める
+    const today = getJSTDate();
+    const todayStr = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, '0')}-${String(today.getUTCDate()).padStart(2, '0')}`;
+    const todayJP = `${today.getUTCFullYear()}年${today.getUTCMonth() + 1}月${today.getUTCDate()}日`;
 
     const prompt = `あなたはレシートや支払い画面を解析する専門家です。
 以下の画像から支出情報を抽出し、必ずJSON形式で出力してください。

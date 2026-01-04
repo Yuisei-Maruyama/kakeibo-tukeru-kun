@@ -108,7 +108,7 @@ export function getJSTInfo(): {
  * - YYYY-M-D: 年を指定（ハイフン）（例: 2024-5-22）
  *
  * @param dateStr - 日付文字列
- * @returns パースされたDateオブジェクト、パース失敗時はnull
+ * @returns パースされたDateオブジェクト（JST）、パース失敗時はnull
  */
 export function parseDateString(dateStr: string): Date | null {
   // スラッシュまたはハイフンで分割
@@ -132,13 +132,14 @@ export function parseDateString(dateStr: string): Date | null {
     return null;
   }
 
-  // 日付の妥当性チェック
-  const date = new Date(year, month - 1, day);
-  if (isNaN(date.getTime()) || date.getMonth() !== month - 1) {
+  // 日付の妥当性チェック（UTCで作成して検証）
+  const testDate = new Date(Date.UTC(year, month - 1, day));
+  if (isNaN(testDate.getTime()) || testDate.getUTCMonth() !== month - 1) {
     return null;
   }
 
-  return date;
+  // JST時刻として Date.UTC で日付を作成（時刻は00:00:00）
+  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 }
 
 /**

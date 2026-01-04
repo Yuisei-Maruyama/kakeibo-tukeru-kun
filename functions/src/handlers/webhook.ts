@@ -11,10 +11,10 @@ import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '.
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
 import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation } from './conversation.js';
 import { generateReportData, getReportPeriod } from './scheduler.js';
-import { parseDateString, parseYearMonthString } from '../utils/date.js';
+import { parseDateString, parseYearMonthString, getJSTDate } from '../utils/date.js';
 
 /**
- * 日付文字列（M/D形式）をパースして未来の日付を返す
+ * 日付文字列（M/D形式）をパースして未来の日付を返す（JST）
  * 過去の日付になる場合は翌年に調整
  */
 function parseFutureDate(input: string): Date | null {
@@ -30,20 +30,21 @@ function parseFutureDate(input: string): Date | null {
     return null;
   }
 
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  let year = now.getFullYear();
+  // JST の現在時刻を取得
+  const jstDate = getJSTDate();
+  const todayUTC = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate()));
+  let year = jstDate.getUTCFullYear();
 
-  let date = new Date(year, month - 1, day);
+  let date = new Date(Date.UTC(year, month - 1, day));
 
   // 過去の日付の場合は翌年に調整
-  if (date < today) {
+  if (date < todayUTC) {
     year++;
-    date = new Date(year, month - 1, day);
+    date = new Date(Date.UTC(year, month - 1, day));
   }
 
   // 日付が有効かチェック（例: 2/30 は無効）
-  if (isNaN(date.getTime()) || date.getMonth() !== month - 1) {
+  if (isNaN(date.getTime()) || date.getUTCMonth() !== month - 1) {
     return null;
   }
 
@@ -467,9 +468,9 @@ async function handleHistoryCommand(
       return;
     }
 
-    // 指定月の1日〜月末を取得
-    startDate = new Date(parsed.year, parsed.month - 1, 1);
-    endDate = new Date(parsed.year, parsed.month, 0, 23, 59, 59, 999);
+    // 指定月の1日〜月末を取得（JST）
+    startDate = new Date(Date.UTC(parsed.year, parsed.month - 1, 1, 0, 0, 0, 0));
+    endDate = new Date(Date.UTC(parsed.year, parsed.month, 0, 23, 59, 59, 999));
     yearMonthLabel = `${parsed.year}年${parsed.month}月`;
   }
 
@@ -511,13 +512,14 @@ async function handleReportCommand(
         return;
       }
 
-      // 指定月の1日〜月末を集計（月間サマリー付き）
-      startDate = new Date(parsed.year, parsed.month - 1, 1);
-      endDate = new Date(parsed.year, parsed.month, 0, 23, 59, 59, 999);
+      // 指定月の1日〜月末を集計（月間サマリー付き、JST）
+      startDate = new Date(Date.UTC(parsed.year, parsed.month - 1, 1, 0, 0, 0, 0));
+      endDate = new Date(Date.UTC(parsed.year, parsed.month, 0, 23, 59, 59, 999));
       reportType = 'end-month'; // 月間サマリーを表示
     } else {
       // 従来の前半/後半指定または引数なし
-      const now = new Date();
+      const jstDate = getJSTDate();
+      const now = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), jstDate.getUTCHours(), jstDate.getUTCMinutes(), jstDate.getUTCSeconds()));
 
       if (args === '前半' || args === 'mid' || args === '後半' || args === '月末' || args === 'end') {
         // 前半/後半指定の場合は従来のロジックを使用
@@ -526,11 +528,11 @@ async function handleReportCommand(
         startDate = period.start;
         endDate = period.end;
       } else {
-        // 引数なしの場合は今月全体を集計（月間サマリー付き）
-        const year = now.getFullYear();
-        const month = now.getMonth();
-        startDate = new Date(year, month, 1);
-        endDate = new Date(year, month + 1, 0, 23, 59, 59, 999);
+        // 引数なしの場合は今月全体を集計（月間サマリー付き、JST）
+        const year = jstDate.getUTCFullYear();
+        const month = jstDate.getUTCMonth();
+        startDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+        endDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
         reportType = 'end-month';
       }
     }
@@ -589,8 +591,9 @@ async function handleDeleteCommand(
 
     const month = parseInt(dateParts[0], 10);
     const day = parseInt(dateParts[1], 10);
-    const year = new Date().getFullYear();
-    const targetDate = new Date(year, month - 1, day);
+    const jstDate = getJSTDate();
+    const year = jstDate.getUTCFullYear();
+    const targetDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 
     // 金額をパース
     const amountStr = parts[1].replace(/[,，]/g, '');
@@ -752,8 +755,9 @@ async function handleAddCommand(
       }
       expenseDate = parsedDate;
     } else {
-      // 日付が指定されない場合は今日の日付を使用
-      expenseDate = new Date();
+      // 日付が指定されない場合は今日のJST日付を使用
+      const jstDate = getJSTDate();
+      expenseDate = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), 0, 0, 0, 0));
     }
 
     // カレンダーに登録（支払い者名を使用）
@@ -894,7 +898,9 @@ async function handleScheduleCommand(
       }
       scheduleDate = parsedDate;
     } else {
-      scheduleDate = new Date();
+      // 日付が指定されない場合は今日のJST日付を使用
+      const jstDate = getJSTDate();
+      scheduleDate = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), 0, 0, 0, 0));
     }
 
     const dateStr = scheduleDate.toISOString().split('T')[0];
