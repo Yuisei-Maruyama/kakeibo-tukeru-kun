@@ -160,8 +160,8 @@ export function createHelpMessage(): string {
   message += `　→ 旅行費用を登録できます\n`;
   message += `　　 画像解析 or 手動入力\n\n`;
   message += `一括入力の場合:\n`;
-  message += `@追加 外食費用 名前 金額\n`;
-  message += `@追加 外食費用 名前 金額 日付\n\n`;
+  message += `@追加 名前 外食費用 金額\n`;
+  message += `@追加 名前 外食費用 金額 日付\n\n`;
   message += `💡 ヒント\n`;
   message += `・@自分 → 送信者の名前に置換\n`;
   message += `・名前は部分一致で検索（通知なし）\n`;
@@ -186,7 +186,8 @@ export function createHelpMessage(): string {
   message += `@削除\n`;
   message += `　→ 対話形式で削除できます\n\n`;
   message += `一括入力の場合:\n`;
-  message += `@削除 日付 金額\n\n`;
+  message += `@削除 名前 カテゴリー 金額\n`;
+  message += `@削除 名前 カテゴリー 金額 日付\n\n`;
 
   // サブスク
   message += `🔄 サブスク（定期支払い）\n`;
@@ -218,6 +219,48 @@ export function createHelpMessage(): string {
   message += `@予算 金額　　月額予算を変更\n`;
   message += `@初期設定　　　外食担当者を設定\n`;
   message += `@設定変更　　　外食担当者を変更`;
+
+  return message;
+}
+
+/**
+ * 省略版ヘルプメッセージを生成
+ */
+export function createQuickHelpMessage(): string {
+  let message = `📚 コマンド一覧（省略版）\n\n`;
+
+  message += `【情報表示】\n`;
+  message += `@ヘルプ\n`;
+  message += `@省略\n`;
+  message += `@残高\n`;
+  message += `@集計 / @集計 2024/12\n`;
+  message += `@履歴 / @履歴 2024/12\n\n`;
+
+  message += `【登録・削除】\n`;
+  message += `@追加 @自分 外食費用 3000 2026/01/01\n`;
+  message += `@旅行 @自分 15000 新幹線代 2026/01/01\n`;
+  message += `@削除 @自分 外食費用 1280 2026/01/01\n\n`;
+
+  message += `【予定】\n`;
+  message += `@予定 @自分 会議 2026/01/01 14:30 16:00\n\n`;
+
+  message += `【設定】\n`;
+  message += `@予算 60000\n`;
+  message += `@初期設定\n`;
+  message += `@設定変更\n\n`;
+
+  message += `【サブスク・家賃】\n`;
+  message += `@サブスク一覧\n`;
+  message += `@サブスク追加\n`;
+  message += `@サブスク変更\n`;
+  message += `@サブスク削除\n`;
+  message += `@家賃追加\n`;
+  message += `@家賃変更\n\n`;
+
+  message += `【その他】\n`;
+  message += `@キャンセル\n\n`;
+
+  message += `詳しくは @ヘルプ で確認してください`;
 
   return message;
 }

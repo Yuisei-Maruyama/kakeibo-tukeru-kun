@@ -669,6 +669,22 @@ async function handleDeleteExpenseConversation(
     }
 
     session.data.deleteUserName = deleteUserName;
+    session.step = 'delete_amount';
+    await updateConversationSession(userId, { step: 'delete_amount', data: session.data });
+
+    await replyMessage(
+      replyToken,
+      `削除する支出の金額を入力してください（数字のみ）`,
+      accessToken
+    );
+  } else if (step === 'delete_amount') {
+    const deleteAmount = parseInt(input.replace(/[,，]/g, ''), 10);
+    if (isNaN(deleteAmount) || deleteAmount <= 0) {
+      await replyMessage(replyToken, '❌ 正しい金額を入力してください', accessToken);
+      return;
+    }
+
+    session.data.deleteAmount = deleteAmount;
     session.step = 'delete_date';
     await updateConversationSession(userId, { step: 'delete_date', data: session.data });
 
@@ -716,25 +732,10 @@ async function handleDeleteExpenseConversation(
     }
 
     const dateStr = `${deleteDate.getUTCFullYear()}-${String(deleteDate.getUTCMonth() + 1).padStart(2, '0')}-${String(deleteDate.getUTCDate()).padStart(2, '0')}`;
-    session.data.deleteDate = dateStr;
-    session.step = 'delete_amount';
-    await updateConversationSession(userId, { step: 'delete_amount', data: session.data });
-
-    await replyMessage(
-      replyToken,
-      `削除する支出の金額を入力してください（数字のみ）`,
-      accessToken
-    );
-  } else if (step === 'delete_amount') {
-    const deleteAmount = parseInt(input.replace(/[,，]/g, ''), 10);
-    if (isNaN(deleteAmount) || deleteAmount <= 0) {
-      await replyMessage(replyToken, '❌ 正しい金額を入力してください', accessToken);
-      return;
-    }
 
     const deleteCategory = data.deleteCategory!;
     const deleteUserName = data.deleteUserName!;
-    const deleteDate = data.deleteDate!;
+    const deleteAmount = data.deleteAmount!;
 
     // 削除対象のユーザー情報を取得（deleteUserNameから検索）
     const targetUser = await getUserByDisplayName(deleteUserName);
@@ -779,7 +780,7 @@ async function handleDeleteExpenseConversation(
       await updateDiningBalance(targetUser.id, newBalance);
 
       const message = createDeleteMessage(
-        deleteDate,
+        dateStr,
         deletedExpense.category,
         deleteAmount,
         deleteUserName,
@@ -789,7 +790,7 @@ async function handleDeleteExpenseConversation(
       await replyMessage(replyToken, message, accessToken);
     } else {
       const message = createDeleteMessage(
-        deleteDate,
+        dateStr,
         deletedExpense.category,
         deleteAmount,
         deleteUserName,

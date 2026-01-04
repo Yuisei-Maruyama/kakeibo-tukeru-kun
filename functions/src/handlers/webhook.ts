@@ -8,7 +8,7 @@ import { Category, ConversationSession, ReportType } from '../types/index.js';
 import { analyzeReceiptImage } from '../services/gemini.js';
 import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession, getUserByDisplayNamePartial } from '../services/firestore.js';
 import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '../services/calendar.js';
-import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
+import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, createQuickHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
 import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation } from './conversation.js';
 import { generateReportData, getReportPeriod } from './scheduler.js';
 import { parseDateString, parseYearMonthString, getJSTDate } from '../utils/date.js';
@@ -296,6 +296,11 @@ async function handleTextMessage(
       const message = createHelpMessage();
       await replyMessage(replyToken, message, accessToken);
     }
+    // @省略コマンド
+    else if (command === '省略') {
+      const message = createQuickHelpMessage();
+      await replyMessage(replyToken, message, accessToken);
+    }
     // @残高コマンド
     else if (command === '残高') {
       await handleBalanceCommand(replyToken, accessToken);
@@ -328,7 +333,7 @@ async function handleTextMessage(
         await startDeleteExpenseConversation(userId, groupId, replyToken, accessToken);
       } else {
         // 引数あり → 通常処理
-        await handleDeleteCommand(replyToken, userId, args, accessToken, calendarId);
+        await handleDeleteCommand(replyToken, userId, groupId, args, accessToken, calendarId, mentions);
       }
     }
     // @追加コマンド
@@ -386,8 +391,15 @@ async function handleTextMessage(
       await startEditRentConversation(userId, groupId, replyToken, accessToken);
     }
     // @旅行コマンド
-    else if (command === '旅行') {
-      await startAddTravelConversation(userId, groupId, replyToken, accessToken);
+    else if (command.startsWith('旅行')) {
+      const args = command.replace('旅行', '').trim();
+      if (args.length === 0) {
+        // 引数なし → 対話モード開始
+        await startAddTravelConversation(userId, groupId, replyToken, accessToken);
+      } else {
+        // 引数あり → ワンライナー処理
+        await handleTravelCommand(replyToken, userId, groupId, args, accessToken, calendarId, mentions);
+      }
     }
     // @キャンセルコマンド
     else if (command === 'キャンセル') {
@@ -557,68 +569,116 @@ async function handleReportCommand(
 
 /**
  * 削除コマンド処理
+ * 形式: @削除 {支払い者名} {カテゴリー} {金額} [{日付}]
  */
 async function handleDeleteCommand(
   replyToken: string,
   userId: string,
+  groupId: string,
   args: string,
   accessToken: string,
-  calendarId: string
+  calendarId: string,
+  mentions: any[] = []
 ): Promise<void> {
   try {
-    // 引数をパース（例: "12/3 1280"）
+    // 引数をパース（例: "@自分 外食費用 1280 12/3"）
     const parts = args.split(' ').filter(p => p.length > 0);
 
-    if (parts.length < 2) {
+    if (parts.length < 3) {
       await replyMessage(
         replyToken,
-        '❌ 形式が正しくありません\n\n使い方: @削除 {日付} {金額}\n例: @削除 12/3 1280',
+        '❌ 形式が正しくありません\n\n使い方: @削除 {支払い者名} {カテゴリー} {金額} [{日付}]\n例: @削除 @自分 外食費用 1280\n例: @削除 @自分 外食費用 1280 12/3\n例: @削除（引数なしで対話形式）',
+        accessToken
+      );
+      return;
+    }
+
+    let payerName = parts[0]; // 支払い者名
+    const category = parts[1];
+    const amountStr = parts[2].replace(/[,，]/g, '');
+    const amount = parseInt(amountStr, 10);
+    const dateInput = parts.length >= 4 ? parts[3] : null; // 日付（オプション）
+
+    // LINEからコマンド実行者の表示名を取得
+    const displayName = await getUserDisplayName(groupId, userId, accessToken);
+
+    // @自分が指定された場合は、送信者の名前を使用
+    if (payerName === '@自分') {
+      payerName = displayName;
+    }
+    // メンションされたユーザーがいる場合、その表示名を取得
+    else if (mentions.length > 0 && payerName.startsWith('@')) {
+      // メンションの最初のユーザーを使用
+      const mentionedUserId = mentions[0].userId;
+      payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+    }
+    // @なしの名前の場合、登録済みユーザーから部分一致検索
+    else if (!payerName.startsWith('@')) {
+      const matchedUser = await getUserByDisplayNamePartial(payerName);
+      if (matchedUser) {
+        payerName = matchedUser.displayName;
+      }
+      // 見つからない場合はそのまま入力値を使用
+    }
+
+    // カテゴリーチェック
+    if (category !== '外食費用' && category !== '買い物費用' && category !== '旅行費用') {
+      await replyMessage(
+        replyToken,
+        '❌ カテゴリーは「外食費用」「買い物費用」「旅行費用」のいずれかを指定してください',
+        accessToken
+      );
+      return;
+    }
+
+    // 金額チェック
+    if (isNaN(amount) || amount <= 0) {
+      await replyMessage(
+        replyToken,
+        '❌ 正しい金額を入力してください\n例: @削除 @自分 外食費用 1280',
         accessToken
       );
       return;
     }
 
     // 日付をパース
-    const dateParts = parts[0].split('/');
-    if (dateParts.length !== 2) {
+    let targetDate: Date;
+    if (dateInput) {
+      // 日付が指定された場合（例: "12/3"、"2024/12/3"）
+      const parsedDate = parseDateString(dateInput);
+      if (!parsedDate) {
+        await replyMessage(
+          replyToken,
+          '❌ 日付の形式が正しくありません\n例: @削除 @自分 外食費用 1280 12/3\n例: @削除 @自分 外食費用 1280 2024/12/3',
+          accessToken
+        );
+        return;
+      }
+      targetDate = parsedDate;
+    } else {
+      // 日付が指定されない場合は今日のJST日付を使用
+      const jstDate = getJSTDate();
+      targetDate = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), 0, 0, 0, 0));
+    }
+
+    // ユーザーIDを取得（支払い者名から検索）
+    const targetUser = await getUserByDisplayNamePartial(payerName);
+    if (!targetUser) {
       await replyMessage(
         replyToken,
-        '❌ 日付の形式が正しくありません\n例: @削除 12/3 1280',
+        `❌ ユーザー「${payerName}」が見つかりません`,
         accessToken
       );
       return;
     }
 
-    const month = parseInt(dateParts[0], 10);
-    const day = parseInt(dateParts[1], 10);
-    const jstDate = getJSTDate();
-    const year = jstDate.getUTCFullYear();
-    const targetDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-
-    // 金額をパース
-    const amountStr = parts[1].replace(/[,，]/g, '');
-    const amount = parseInt(amountStr, 10);
-
-    if (isNaN(amount) || amount <= 0) {
-      await replyMessage(
-        replyToken,
-        '❌ 正しい金額を入力してください\n例: @削除 12/3 1280',
-        accessToken
-      );
-      return;
-    }
-
-    // 該当する支出を削除（まず外食費用、次に買い物費用で検索）
-    let deletedExpense = await deleteExpenseByDateAndAmount(userId, targetDate, amount, '外食費用');
-
-    if (!deletedExpense) {
-      deletedExpense = await deleteExpenseByDateAndAmount(userId, targetDate, amount, '買い物費用');
-    }
+    // 該当する支出を削除
+    const deletedExpense = await deleteExpenseByDateAndAmount(targetUser.id, targetDate, amount, category);
 
     if (!deletedExpense) {
       await replyMessage(
         replyToken,
-        '❌ 指定した日付・金額の支出が見つかりません',
+        '❌ 指定した条件の支出が見つかりません',
         accessToken
       );
       return;
@@ -666,6 +726,7 @@ async function handleDeleteCommand(
 
 /**
  * 追加コマンド処理
+ * 形式: @追加 {支払い者名} {カテゴリー} {金額} [{日付}]
  */
 async function handleAddCommand(
   replyToken: string,
@@ -677,20 +738,20 @@ async function handleAddCommand(
   mentions: any[] = []
 ): Promise<void> {
   try {
-    // 引数をパース（例: "外食費用 田中 1280" または "外食費用 田中 1280 12/1"）
+    // 引数をパース（例: "田中 外食費用 1280" または "田中 外食費用 1280 12/1"）
     const parts = args.split(' ').filter(p => p.length > 0);
 
     if (parts.length < 3) {
       await replyMessage(
         replyToken,
-        '❌ 形式が正しくありません\n\n使い方: @追加 {カテゴリー} {支払い者名} {金額} [{日付}]\n例: @追加 外食費用 田中 1280\n例: @追加 外食費用 @自分 1280\n例: @追加 外食費用 田中 1280 12/1',
+        '❌ 形式が正しくありません\n\n使い方: @追加 {支払い者名} {カテゴリー} {金額} [{日付}]\n例: @追加 田中 外食費用 1280\n例: @追加 @自分 外食費用 1280\n例: @追加 田中 外食費用 1280 12/1',
         accessToken
       );
       return;
     }
 
-    const category = parts[0];
-    let payerName = parts[1]; // 支払い者名（代理入力可能）
+    let payerName = parts[0]; // 支払い者名（代理入力可能）
+    const category = parts[1];
     const amountStr = parts[2].replace(/[,，]/g, '');
     const amount = parseInt(amountStr, 10);
     const dateInput = parts.length >= 4 ? parts[3] : null; // 日付（オプション）
@@ -731,7 +792,7 @@ async function handleAddCommand(
     if (isNaN(amount) || amount <= 0) {
       await replyMessage(
         replyToken,
-        '❌ 正しい金額を入力してください\n例: @追加 外食費用 田中 1280',
+        '❌ 正しい金額を入力してください\n例: @追加 田中 外食費用 1280',
         accessToken
       );
       return;
@@ -748,7 +809,7 @@ async function handleAddCommand(
       if (!parsedDate) {
         await replyMessage(
           replyToken,
-          '❌ 日付の形式が正しくありません\n例: @追加 外食費用 田中 1280 12/1\n例: @追加 外食費用 田中 1280 2024/12/1',
+          '❌ 日付の形式が正しくありません\n例: @追加 田中 外食費用 1280 12/1\n例: @追加 田中 外食費用 1280 2024/12/1',
           accessToken
         );
         return;
@@ -808,6 +869,138 @@ async function handleAddCommand(
     await replyMessage(
       replyToken,
       `❌ 追加に失敗しました\n\n詳細: ${errorMsg}\n\n${errorStack ? `スタック:\n${errorStack.substring(0, 200)}...` : ''}`,
+      accessToken
+    );
+  }
+}
+
+/**
+ * 旅行コマンド処理
+ * 形式: @旅行 {支払い者名} {金額} {店舗名} [{日付}]
+ */
+async function handleTravelCommand(
+  replyToken: string,
+  userId: string,
+  groupId: string,
+  args: string,
+  accessToken: string,
+  calendarId: string,
+  mentions: any[] = []
+): Promise<void> {
+  try {
+    // 引数をパース（例: "@自分 15000 新幹線代" または "@自分 15000 新幹線代 12/20"）
+    const parts = args.split(' ').filter(p => p.length > 0);
+
+    if (parts.length < 3) {
+      await replyMessage(
+        replyToken,
+        '❌ 形式が正しくありません\n\n使い方: @旅行 {支払い者名} {金額} {店舗名} [{日付}]\n例: @旅行 @自分 15000 新幹線代\n例: @旅行 @自分 15000 新幹線代 12/20\n例: @旅行（引数なしで対話形式）',
+        accessToken
+      );
+      return;
+    }
+
+    let payerName = parts[0]; // 支払い者名
+    const amountStr = parts[1].replace(/[,，]/g, '');
+    const amount = parseInt(amountStr, 10);
+    const storeName = parts[2]; // 店舗名
+    const dateInput = parts.length >= 4 ? parts[3] : null; // 日付（オプション）
+
+    // LINEからコマンド実行者の表示名を取得
+    const displayName = await getUserDisplayName(groupId, userId, accessToken);
+
+    // @自分が指定された場合は、送信者の名前を使用
+    if (payerName === '@自分') {
+      payerName = displayName;
+    }
+    // メンションされたユーザーがいる場合、その表示名を取得
+    else if (mentions.length > 0 && payerName.startsWith('@')) {
+      // メンションの最初のユーザーを使用
+      const mentionedUserId = mentions[0].userId;
+      payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
+    }
+    // @なしの名前の場合、登録済みユーザーから部分一致検索
+    else if (!payerName.startsWith('@')) {
+      const matchedUser = await getUserByDisplayNamePartial(payerName);
+      if (matchedUser) {
+        payerName = matchedUser.displayName;
+      }
+      // 見つからない場合はそのまま入力値を使用
+    }
+
+    // 金額チェック
+    if (isNaN(amount) || amount <= 0) {
+      await replyMessage(
+        replyToken,
+        '❌ 正しい金額を入力してください\n例: @旅行 @自分 15000 新幹線代',
+        accessToken
+      );
+      return;
+    }
+
+    // ユーザー情報を取得・作成（コマンド実行者として）
+    await getOrCreateUser(userId, displayName, groupId);
+
+    // 日付をパース
+    let expenseDate: Date;
+    if (dateInput) {
+      // 日付が指定された場合（例: "12/20"、"2024/12/20"）
+      const parsedDate = parseDateString(dateInput);
+      if (!parsedDate) {
+        await replyMessage(
+          replyToken,
+          '❌ 日付の形式が正しくありません\n例: @旅行 @自分 15000 新幹線代 12/20\n例: @旅行 @自分 15000 新幹線代 2024/12/20',
+          accessToken
+        );
+        return;
+      }
+      expenseDate = parsedDate;
+    } else {
+      // 日付が指定されない場合は今日のJST日付を使用
+      const jstDate = getJSTDate();
+      expenseDate = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), 0, 0, 0, 0));
+    }
+
+    // カレンダーに登録（支払い者名を使用）
+    const dateStr = expenseDate.toISOString().split('T')[0];
+
+    const calendarEventId = await createCalendarEvent(
+      calendarId,
+      payerName,
+      amount,
+      '旅行費用',
+      storeName,
+      dateStr
+    );
+
+    // Firestoreに保存（支払い者名を使用）
+    await saveExpense({
+      userId,
+      userName: payerName,
+      amount,
+      category: '旅行費用',
+      storeName,
+      date: Timestamp.fromDate(expenseDate),
+      calendarEventId,
+    });
+
+    // 返信メッセージを送信
+    const responseMessage = createRegistrationMessage(
+      '旅行費用',
+      amount,
+      payerName,
+      storeName,
+      dateStr
+    );
+
+    await replyMessage(replyToken, responseMessage, accessToken);
+  } catch (error) {
+    console.error('Travel command error:', error);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    const errorStack = error instanceof Error ? error.stack : '';
+    await replyMessage(
+      replyToken,
+      `❌ 旅行費用の登録に失敗しました\n\n詳細: ${errorMsg}\n\n${errorStack ? `スタック:\n${errorStack.substring(0, 200)}...` : ''}`,
       accessToken
     );
   }
