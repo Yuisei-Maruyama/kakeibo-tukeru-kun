@@ -1,6 +1,6 @@
 import { Request, Response } from '@google-cloud/functions-framework';
 import { Timestamp } from '@google-cloud/firestore';
-import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, getExpenseByCalendarEventId, getUserIdByDisplayName, saveExpense, updateDiningBalance, getUser, getAllActiveSubscriptions, getRent, updateExpense, findExpenseWithoutCalendarEventId } from '../services/firestore.js';
+import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, getExpenseByCalendarEventId, getUserIdByDisplayName, saveExpense, updateDiningBalance, getUser, getAllActiveSubscriptions, getRent, updateExpense, findExpenseWithoutCalendarEventId, getExpensesByDateRange, deleteExpenseById } from '../services/firestore.js';
 import { pushMessage, createReportMessage } from '../services/line.js';
 import { getTodaySchedules, getMonthlyExpenseEvents, createCalendarEvent } from '../services/calendar.js';
 import { ReportData, ReportType, UserExpenses, MonthlySummary } from '../types/index.js';
@@ -405,6 +405,7 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
     let updatedCount = 0;
     let skippedCount = 0;
     let errorCount = 0;
+    let deletedCount = 0;
 
     // 各イベントをFirestoreに同期
     for (const event of expenseEvents) {
@@ -527,13 +528,51 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
       }
     }
 
-    console.log(`Calendar sync completed: ${syncedCount} synced, ${updatedCount} updated, ${skippedCount} skipped, ${errorCount} errors`);
+    // カレンダーにないFirestoreの支出を削除
+    console.log('Checking for deleted calendar events...');
+
+    // カレンダーイベントIDのセットを作成
+    const calendarEventIds = new Set(expenseEvents.map(e => e.eventId));
+
+    // Firestoreから当月の支出を取得（calendarEventIdが存在するもののみ）
+    const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+    const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+    const firestoreExpenses = await getExpensesByDateRange(startDate, endDate);
+
+    // カレンダーイベントIDを持つがカレンダーに存在しない支出を削除
+    for (const expense of firestoreExpenses) {
+      if (expense.calendarEventId && !calendarEventIds.has(expense.calendarEventId)) {
+        try {
+          console.log(`Deleting expense (calendar event removed): ${expense.calendarEventId} - ${expense.userName} ¥${expense.amount}`);
+
+          // 外食費用の場合は残高を戻す
+          if (expense.category === '外食費用') {
+            const user = await getUser(expense.userId);
+            if (user) {
+              const restoredBalance = user.diningBalance + expense.amount;
+              await updateDiningBalance(expense.userId, restoredBalance);
+              console.log(`Restored dining balance for ${expense.userName}: +${expense.amount}`);
+            }
+          }
+
+          // 支出を削除
+          await deleteExpenseById(expense.id!);
+          deletedCount++;
+        } catch (error) {
+          console.error(`Failed to delete expense ${expense.id}:`, error);
+          errorCount++;
+        }
+      }
+    }
+
+    console.log(`Calendar sync completed: ${syncedCount} synced, ${updatedCount} updated, ${skippedCount} skipped, ${deletedCount} deleted, ${errorCount} errors`);
 
     res.status(200).json({
       status: 'ok',
       synced: syncedCount,
       updated: updatedCount,
       skipped: skippedCount,
+      deleted: deletedCount,
       errors: errorCount,
       total: expenseEvents.length,
     });

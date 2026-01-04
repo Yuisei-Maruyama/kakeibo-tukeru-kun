@@ -238,6 +238,37 @@ export async function getRecentExpenses(
 }
 
 /**
+ * 指定期間の支出を全て取得
+ * @param startDate - 開始日
+ * @param endDate - 終了日
+ */
+export async function getExpensesByDateRange(
+  startDate: Date,
+  endDate: Date
+): Promise<Expense[]> {
+  const db = getFirestore();
+  const snapshot = await db
+    .collection('expenses')
+    .where('date', '>=', Timestamp.fromDate(startDate))
+    .where('date', '<=', Timestamp.fromDate(endDate))
+    .get();
+
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  } as Expense));
+}
+
+/**
+ * IDで支出を削除
+ */
+export async function deleteExpenseById(expenseId: string): Promise<void> {
+  const db = getFirestore();
+  await db.collection('expenses').doc(expenseId).delete();
+  console.log(`Deleted expense: ${expenseId}`);
+}
+
+/**
  * 指定日付の支出を削除
  */
 export async function deleteExpensesByDate(
