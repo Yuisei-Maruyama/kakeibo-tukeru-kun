@@ -328,6 +328,8 @@ export function createReportMessage(reportData: ReportData): string {
 
 /**
  * 履歴メッセージを生成
+ * @param expenses - 支出データ
+ * @param yearMonthLabel - 年月ラベル（例: "2024年5月"）
  */
 export function createHistoryMessage(
   expenses: Array<{
@@ -335,13 +337,16 @@ export function createHistoryMessage(
     category: Category;
     userName: string;
     amount: number;
-  }>
+  }>,
+  yearMonthLabel?: string
 ): string {
   if (expenses.length === 0) {
-    return `📋 支出履歴がありません`;
+    const label = yearMonthLabel ? `${yearMonthLabel}の` : '';
+    return `📋 ${label}支出履歴がありません`;
   }
 
-  let message = `📋 直近の支出履歴\n\n`;
+  const title = yearMonthLabel ? `${yearMonthLabel}の支出履歴` : '直近の支出履歴';
+  let message = `📋 ${title}\n\n`;
 
   expenses.forEach((exp, index) => {
     const dateStr = formatDate(exp.date.toISOString().split('T')[0]);

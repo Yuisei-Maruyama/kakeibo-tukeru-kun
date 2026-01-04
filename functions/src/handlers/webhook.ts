@@ -11,6 +11,7 @@ import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '.
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
 import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation } from './conversation.js';
 import { generateReportData, getReportPeriod } from './scheduler.js';
+import { parseDateString, parseYearMonthString } from '../utils/date.js';
 
 /**
  * 日付文字列（M/D形式）をパースして未来の日付を返す
@@ -309,12 +310,13 @@ async function handleTextMessage(
       await handleBudgetCommand(replyToken, amount, accessToken);
     }
     // @履歴コマンド
-    else if (command === '履歴') {
-      await handleHistoryCommand(replyToken, accessToken);
+    else if (command === '履歴' || command.startsWith('履歴 ')) {
+      const args = command.replace('履歴', '').trim();
+      await handleHistoryCommand(replyToken, args, accessToken);
     }
-    // @レポートコマンド
-    else if (command === 'レポート' || command.startsWith('レポート ')) {
-      const args = command.replace('レポート', '').trim();
+    // @レポート/@集計コマンド
+    else if (command === 'レポート' || command.startsWith('レポート ') || command === '集計' || command.startsWith('集計 ')) {
+      const args = command.replace(/^(レポート|集計)\s*/, '').trim();
       await handleReportCommand(replyToken, args, accessToken);
     }
     // @削除コマンド
@@ -441,10 +443,37 @@ async function handleBudgetCommand(replyToken: string, newBudget: number, access
 }
 
 /**
- * 履歴コマンド処理
+ * 履歴コマンド処理（年月指定可能）
+ * @param args - 年月指定（例: "12", "2024/12", "2024-12"）
  */
-async function handleHistoryCommand(replyToken: string, accessToken: string): Promise<void> {
-  const expenses = await getRecentExpenses(10);
+async function handleHistoryCommand(
+  replyToken: string,
+  args: string,
+  accessToken: string
+): Promise<void> {
+  let startDate: Date | undefined;
+  let endDate: Date | undefined;
+  let yearMonthLabel: string | undefined;
+
+  // 年月指定がある場合
+  if (args.length > 0) {
+    const parsed = parseYearMonthString(args);
+    if (!parsed) {
+      await replyMessage(
+        replyToken,
+        '❌ 年月の形式が正しくありません\n例: @履歴 12\n例: @履歴 2024/12',
+        accessToken
+      );
+      return;
+    }
+
+    // 指定月の1日〜月末を取得
+    startDate = new Date(parsed.year, parsed.month - 1, 1);
+    endDate = new Date(parsed.year, parsed.month, 0, 23, 59, 59, 999);
+    yearMonthLabel = `${parsed.year}年${parsed.month}月`;
+  }
+
+  const expenses = await getRecentExpenses(10, startDate, endDate);
   const historyData = expenses.map(exp => ({
     date: exp.date.toDate(),
     category: exp.category,
@@ -452,12 +481,13 @@ async function handleHistoryCommand(replyToken: string, accessToken: string): Pr
     amount: exp.amount,
   }));
 
-  const message = createHistoryMessage(historyData);
+  const message = createHistoryMessage(historyData, yearMonthLabel);
   await replyMessage(replyToken, message, accessToken);
 }
 
 /**
- * レポートコマンド処理
+ * レポートコマンド処理（年月指定可能）
+ * @param args - 年月指定（例: "12", "2024/12", "2024-12"）または前半/後半指定
  */
 async function handleReportCommand(
   replyToken: string,
@@ -465,25 +495,48 @@ async function handleReportCommand(
   accessToken: string
 ): Promise<void> {
   try {
-    const now = new Date();
-    const day = now.getDate();
+    let startDate: Date;
+    let endDate: Date;
+    let reportType: ReportType = 'end-month';
 
-    // 引数でレポートタイプを指定可能（デフォルトは現在の日付に基づく）
-    let reportType: ReportType;
-    if (args === '前半' || args === 'mid') {
-      reportType = 'mid-month';
-    } else if (args === '後半' || args === '月末' || args === 'end') {
-      reportType = 'end-month';
+    // 年月指定がある場合（例: "12", "2024/12"）
+    if (args.length > 0 && args !== '前半' && args !== 'mid' && args !== '後半' && args !== '月末' && args !== 'end') {
+      const parsed = parseYearMonthString(args);
+      if (!parsed) {
+        await replyMessage(
+          replyToken,
+          '❌ 年月の形式が正しくありません\n例: @集計\n例: @集計 12\n例: @集計 2024/12',
+          accessToken
+        );
+        return;
+      }
+
+      // 指定月の1日〜月末を集計（月間サマリー付き）
+      startDate = new Date(parsed.year, parsed.month - 1, 1);
+      endDate = new Date(parsed.year, parsed.month, 0, 23, 59, 59, 999);
+      reportType = 'end-month'; // 月間サマリーを表示
     } else {
-      // 引数なしの場合は現在の日付に基づいて決定
-      reportType = day <= 15 ? 'mid-month' : 'end-month';
+      // 従来の前半/後半指定または引数なし
+      const now = new Date();
+
+      if (args === '前半' || args === 'mid' || args === '後半' || args === '月末' || args === 'end') {
+        // 前半/後半指定の場合は従来のロジックを使用
+        reportType = (args === '前半' || args === 'mid') ? 'mid-month' : 'end-month';
+        const period = getReportPeriod(now, reportType);
+        startDate = period.start;
+        endDate = period.end;
+      } else {
+        // 引数なしの場合は今月全体を集計（月間サマリー付き）
+        const year = now.getFullYear();
+        const month = now.getMonth();
+        startDate = new Date(year, month, 1);
+        endDate = new Date(year, month + 1, 0, 23, 59, 59, 999);
+        reportType = 'end-month';
+      }
     }
 
-    // レポート期間を取得
-    const period = getReportPeriod(now, reportType);
-
     // レポートデータを生成
-    const reportData = await generateReportData(period.start, period.end, reportType);
+    const reportData = await generateReportData(startDate, endDate, reportType);
 
     // レポートメッセージを生成
     const message = createReportMessage(reportData);
@@ -687,31 +740,17 @@ async function handleAddCommand(
     // 日付をパース
     let expenseDate: Date;
     if (dateInput) {
-      // 日付が指定された場合（例: "12/1"）
-      const dateParts = dateInput.split('/');
-      if (dateParts.length === 2) {
-        const month = parseInt(dateParts[0], 10);
-        const day = parseInt(dateParts[1], 10);
-        const year = new Date().getFullYear();
-        expenseDate = new Date(year, month - 1, day);
-
-        // 日付が無効な場合
-        if (isNaN(expenseDate.getTime())) {
-          await replyMessage(
-            replyToken,
-            '❌ 日付の形式が正しくありません\n例: @追加 外食費用 田中 1280 12/1',
-            accessToken
-          );
-          return;
-        }
-      } else {
+      // 日付が指定された場合（例: "12/1"、"2024/12/1"）
+      const parsedDate = parseDateString(dateInput);
+      if (!parsedDate) {
         await replyMessage(
           replyToken,
-          '❌ 日付の形式が正しくありません\n例: @追加 外食費用 田中 1280 12/1',
+          '❌ 日付の形式が正しくありません\n例: @追加 外食費用 田中 1280 12/1\n例: @追加 外食費用 田中 1280 2024/12/1',
           accessToken
         );
         return;
       }
+      expenseDate = parsedDate;
     } else {
       // 日付が指定されない場合は今日の日付を使用
       expenseDate = new Date();

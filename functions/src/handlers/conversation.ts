@@ -1,5 +1,6 @@
 import { Timestamp } from '@google-cloud/firestore';
 import { ConversationSession, Category } from '../types/index.js';
+import { parseDateString } from '../utils/date.js';
 import {
   saveConversationSession,
   updateConversationSession,
@@ -286,9 +287,10 @@ async function handleAddExpenseConversation(
     session.step = 'date';
     await updateConversationSession(userId, { step: 'date', data: session.data });
 
+    const currentYear = new Date().getFullYear();
     await replyMessage(
       replyToken,
-      `日付を入力してください\n（例: 12/15）\n「今日」と入力すると今日の日付になります`,
+      `日付を入力してください\n（例: 12/15、2024/12/15）\n日付形式:\n- M/D: 今年の日付（例: 5/22 → ${currentYear}/5/22）\n- YYYY/M/D: 年を指定（例: 2024/5/22）\n「今日」と入力すると今日の日付になります`,
       accessToken
     );
   } else if (step === 'date') {
@@ -296,21 +298,16 @@ async function handleAddExpenseConversation(
     if (input === '今日') {
       expenseDate = new Date();
     } else {
-      const dateParts = input.split('/');
-      if (dateParts.length === 2) {
-        const month = parseInt(dateParts[0], 10);
-        const day = parseInt(dateParts[1], 10);
-        const year = new Date().getFullYear();
-        expenseDate = new Date(year, month - 1, day);
-
-        if (isNaN(expenseDate.getTime())) {
-          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15', accessToken);
-          return;
-        }
-      } else {
-        await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15', accessToken);
+      const parsedDate = parseDateString(input);
+      if (!parsedDate) {
+        await replyMessage(
+          replyToken,
+          '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15',
+          accessToken
+        );
         return;
       }
+      expenseDate = parsedDate;
     }
 
     const category = data.category!;
@@ -490,9 +487,10 @@ async function handleAddScheduleConversation(
       throw updateError;
     }
 
+    const currentYear = new Date().getFullYear();
     await replyMessage(
       replyToken,
-      `日付を入力してください\n（例: 12/15）\n「今日」と入力すると今日の日付になります`,
+      `日付を入力してください\n（例: 12/15、2024/12/15）\n日付形式:\n- M/D: 今年の日付（例: 5/22 → ${currentYear}/5/22）\n- YYYY/M/D: 年を指定（例: 2024/5/22）\n「今日」と入力すると今日の日付になります`,
       accessToken
     );
     console.log(`Reply message sent for schedule_content step`);
@@ -501,10 +499,14 @@ async function handleAddScheduleConversation(
     if (input === '今日') {
       scheduleDate = new Date();
     } else {
-      // 予定は未来の日付のみ許可（過去の日付は翌年に調整）
-      const parsedDate = parseFutureDate(input);
+      // 日付をパース（年指定にも対応）
+      const parsedDate = parseDateString(input);
       if (!parsedDate) {
-        await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15', accessToken);
+        await replyMessage(
+          replyToken,
+          '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15',
+          accessToken
+        );
         return;
       }
       scheduleDate = parsedDate;

@@ -99,3 +99,81 @@ export function getJSTInfo(): {
     utcOffset: '+09:00',
   };
 }
+
+/**
+ * 日付文字列をパースしてDateオブジェクトを返す
+ * 対応形式:
+ * - M/D: 今年の日付（例: 5/22 → 2024/5/22）
+ * - YYYY/M/D: 年を指定（例: 2024/5/22）
+ * - YYYY-M-D: 年を指定（ハイフン）（例: 2024-5-22）
+ *
+ * @param dateStr - 日付文字列
+ * @returns パースされたDateオブジェクト、パース失敗時はnull
+ */
+export function parseDateString(dateStr: string): Date | null {
+  // スラッシュまたはハイフンで分割
+  const parts = dateStr.split(/[/-]/);
+
+  let year: number;
+  let month: number;
+  let day: number;
+
+  if (parts.length === 3) {
+    // YYYY/M/D または YYYY-M-D 形式
+    year = parseInt(parts[0], 10);
+    month = parseInt(parts[1], 10);
+    day = parseInt(parts[2], 10);
+  } else if (parts.length === 2) {
+    // M/D 形式（今年として扱う）
+    year = getJSTYear();
+    month = parseInt(parts[0], 10);
+    day = parseInt(parts[1], 10);
+  } else {
+    return null;
+  }
+
+  // 日付の妥当性チェック
+  const date = new Date(year, month - 1, day);
+  if (isNaN(date.getTime()) || date.getMonth() !== month - 1) {
+    return null;
+  }
+
+  return date;
+}
+
+/**
+ * 年月文字列をパースして年月を返す
+ * 対応形式:
+ * - M: 今年の指定月（例: 12 → 2024/12）
+ * - YYYY/M: 年月を指定（例: 2024/12）
+ * - YYYY-M: 年月を指定（ハイフン）（例: 2024-12）
+ *
+ * @param yearMonthStr - 年月文字列
+ * @returns { year: 年, month: 月（1-12） }、パース失敗時はnull
+ */
+export function parseYearMonthString(yearMonthStr: string): { year: number; month: number } | null {
+  // スラッシュまたはハイフンで分割
+  const parts = yearMonthStr.split(/[/-]/);
+
+  let year: number;
+  let month: number;
+
+  if (parts.length === 2) {
+    // YYYY/M または YYYY-M 形式
+    year = parseInt(parts[0], 10);
+    month = parseInt(parts[1], 10);
+  } else if (parts.length === 1) {
+    // M 形式（今年として扱う）
+    year = getJSTYear();
+    month = parseInt(parts[0], 10);
+  } else {
+    return null;
+  }
+
+  // 月の妥当性チェック
+  if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+    return null;
+  }
+
+  return { year, month };
+}

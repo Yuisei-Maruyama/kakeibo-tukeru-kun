@@ -211,15 +211,28 @@ export async function getExpensesSummary(
 }
 
 /**
- * 直近の支出を取得
+ * 直近の支出を取得（年月指定可能）
+ * @param limit - 取得件数
+ * @param startDate - 開始日（省略時は全期間）
+ * @param endDate - 終了日（省略時は全期間）
  */
-export async function getRecentExpenses(limit: number = 10): Promise<Expense[]> {
+export async function getRecentExpenses(
+  limit: number = 10,
+  startDate?: Date,
+  endDate?: Date
+): Promise<Expense[]> {
   const db = getFirestore();
-  const snapshot = await db
-    .collection('expenses')
-    .orderBy('date', 'desc')
-    .limit(limit)
-    .get();
+  let query = db.collection('expenses').orderBy('date', 'desc');
+
+  // 期間指定がある場合はフィルタを追加
+  if (startDate) {
+    query = query.where('date', '>=', Timestamp.fromDate(startDate));
+  }
+  if (endDate) {
+    query = query.where('date', '<=', Timestamp.fromDate(endDate));
+  }
+
+  const snapshot = await query.limit(limit).get();
 
   return snapshot.docs.map(doc => doc.data() as Expense);
 }
