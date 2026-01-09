@@ -14,44 +14,6 @@ import { generateReportData, getReportPeriod } from './scheduler.js';
 import { parseDateString, parseYearMonthString, getJSTDate } from '../utils/date.js';
 
 /**
- * 日付文字列（M/D形式）をパースして未来の日付を返す（JST）
- * 過去の日付になる場合は翌年に調整
- */
-function parseFutureDate(input: string): Date | null {
-  const dateParts = input.split('/');
-  if (dateParts.length !== 2) {
-    return null;
-  }
-
-  const month = parseInt(dateParts[0], 10);
-  const day = parseInt(dateParts[1], 10);
-
-  if (isNaN(month) || isNaN(day) || month < 1 || month > 12 || day < 1 || day > 31) {
-    return null;
-  }
-
-  // JST の現在時刻を取得
-  const jstDate = getJSTDate();
-  const todayUTC = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate()));
-  let year = jstDate.getUTCFullYear();
-
-  let date = new Date(Date.UTC(year, month - 1, day));
-
-  // 過去の日付の場合は翌年に調整
-  if (date < todayUTC) {
-    year++;
-    date = new Date(Date.UTC(year, month - 1, day));
-  }
-
-  // 日付が有効かチェック（例: 2/30 は無効）
-  if (isNaN(date.getTime()) || date.getUTCMonth() !== month - 1) {
-    return null;
-  }
-
-  return date;
-}
-
-/**
  * 署名検証
  */
 function validateSignature(body: string, signature: string, channelSecret: string): boolean {
@@ -779,10 +741,10 @@ async function handleAddCommand(
     }
 
     // カテゴリーチェック
-    if (category !== '外食費用' && category !== '買い物費用') {
+    if (category !== '外食費用' && category !== '買い物費用' && category !== '旅行費用') {
       await replyMessage(
         replyToken,
-        '❌ カテゴリーは「外食費用」または「買い物費用」を指定してください',
+        '❌ カテゴリーは「外食費用」「買い物費用」「旅行費用」のいずれかを指定してください',
         accessToken
       );
       return;
@@ -1008,7 +970,7 @@ async function handleTravelCommand(
 
 /**
  * 予定コマンド処理
- * 複数人対応: カンマ区切りでユーザー名を指定可能（例: 田中,鈴木 会議）
+ * 参加者はPOSTしたユーザーが自動設定される
  */
 async function handleScheduleCommand(
   replyToken: string,
@@ -1020,71 +982,35 @@ async function handleScheduleCommand(
   mentions: any[] = []
 ): Promise<void> {
   try {
-    // 引数をパース（例: "田中 会議" または "田中,鈴木 会議 12/15" または "田中 会議 12/15 14:30 16:00"）
+    // 引数をパース（例: "会議" または "会議 12/15" または "会議 12/15 14:30 16:00"）
     const parts = args.split(' ').filter(p => p.length > 0);
 
-    if (parts.length < 2) {
+    if (parts.length < 1) {
       await replyMessage(
         replyToken,
-        '❌ 形式が正しくありません\n\n使い方: @予定 {ユーザー名} {予定内容} [{日付}] [{開始時間}] [{終了時間}]\n※ユーザー名はカンマ区切りで複数人指定可能\n\n例: @予定 田中 会議\n例: @予定 田中,鈴木 会議\n例: @予定 @自分 会議\n例: @予定 田中 会議 12/15\n例: @予定 田中,鈴木 会議 12/15 14:30 16:00',
+        '❌ 形式が正しくありません\n\n使い方: @予定 {予定内容} [{日付}] [{開始時間}] [{終了時間}]\n\n例: @予定 会議\n例: @予定 会議 12/15\n例: @予定 会議 12/15 14:30\n例: @予定 会議 12/15 14:30 16:00',
         accessToken
       );
       return;
     }
 
-    const userNamesInput = parts[0];
-    const scheduleContent = parts[1];
-    const dateInput = parts.length >= 3 ? parts[2] : null;
-    const startTimeInput = parts.length >= 4 ? parts[3] : null;
-    const endTimeInput = parts.length >= 5 ? parts[4] : null;
+    const scheduleContent = parts[0];
+    const dateInput = parts.length >= 2 ? parts[1] : null;
+    const startTimeInput = parts.length >= 3 ? parts[2] : null;
+    const endTimeInput = parts.length >= 4 ? parts[3] : null;
 
-    // LINEからコマンド実行者の表示名を取得
-    const displayName = await getUserDisplayName(groupId, userId, accessToken);
+    // LINEからコマンド実行者の表示名を取得（参加者として自動設定）
+    const userName = await getUserDisplayName(groupId, userId, accessToken);
 
-    // カンマ区切りでユーザー名をパース
-    const userNameParts = userNamesInput.split(',').map(name => name.trim()).filter(name => name.length > 0);
-    const resolvedUserNames: string[] = [];
-
-    // メンションのインデックス
-    let mentionIndex = 0;
-
-    for (const namePart of userNameParts) {
-      if (namePart === '@自分') {
-        // @自分が指定された場合は、送信者の名前を使用
-        resolvedUserNames.push(displayName);
-      } else if (namePart.startsWith('@') && mentions.length > mentionIndex) {
-        // メンションされたユーザーがいる場合、その表示名を取得
-        const mentionedUserId = mentions[mentionIndex].userId;
-        const mentionedName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
-        resolvedUserNames.push(mentionedName);
-        mentionIndex++;
-      } else if (!namePart.startsWith('@')) {
-        // 通常のユーザー名
-        resolvedUserNames.push(namePart);
-      }
-    }
-
-    if (resolvedUserNames.length === 0) {
-      await replyMessage(
-        replyToken,
-        '❌ ユーザー名を指定してください',
-        accessToken
-      );
-      return;
-    }
-
-    // 複数人の場合はカンマ区切りで結合
-    const userName = resolvedUserNames.join('、');
-
-    // 日付をパース（予定は未来の日付のみ許可）
+    // 日付をパース
     let scheduleDate: Date;
     if (dateInput) {
-      // 日付が指定された場合（例: "12/15"）
-      const parsedDate = parseFutureDate(dateInput);
+      // 日付が指定された場合（例: "12/15"、"2026/1/22"）
+      const parsedDate = parseDateString(dateInput);
       if (!parsedDate) {
         await replyMessage(
           replyToken,
-          '❌ 日付の形式が正しくありません\n例: @予定 田中 会議 12/15',
+          '❌ 日付の形式が正しくありません\n例: @予定 会議 12/15\n例: @予定 会議 2026/1/22',
           accessToken
         );
         return;
@@ -1147,6 +1073,11 @@ async function handleScheduleCommand(
         await replyMessage(replyToken, '❌ 終了時間の形式が正しくありません\n例: 16:00', accessToken);
         return;
       }
+    } else if (startTime) {
+      // 開始時間のみが指定された場合、終了時間を1時間後に設定
+      const [hour, minute] = startTime.split(':').map(Number);
+      const endHour = (hour + 1) % 24;
+      endTime = `${String(endHour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     }
 
     // カレンダーに予定を登録

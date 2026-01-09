@@ -106,7 +106,7 @@ export async function startAddScheduleConversation(
     userId,
     groupId,
     type: 'add_schedule',
-    step: 'participant_count',
+    step: 'schedule_content',
     data: {},
     createdAt: Timestamp.now(),
     expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
@@ -116,8 +116,7 @@ export async function startAddScheduleConversation(
 
   const message = `📅 予定を登録します
 
-予定の参加人数を入力してください
-（例: 1、2、3...）`;
+予定内容を入力してください`;
 
   await replyMessage(replyToken, message, accessToken);
 }
@@ -409,66 +408,7 @@ async function handleAddScheduleConversation(
   console.log(`handleAddScheduleConversation: step=${session.step}, input="${input.substring(0, 100)}" (length: ${input.length})`);
   const { step, data } = session;
 
-  if (step === 'participant_count') {
-    // 参加人数の入力
-    const count = parseInt(input.trim(), 10);
-    if (isNaN(count) || count < 1 || count > 10) {
-      await replyMessage(replyToken, '❌ 1〜10の数字を入力してください', accessToken);
-      return;
-    }
-
-    session.data.participantCount = count;
-    session.data.userNames = [];
-    session.step = 'user_name';
-    await updateConversationSession(userId, { step: 'user_name', data: session.data });
-
-    const message = count === 1
-      ? `1人目のユーザー名を入力してください\n（@自分 で自分の名前、@メンションでユーザー指定）`
-      : `1人目のユーザー名を入力してください\n（@自分 で自分の名前、@メンションでユーザー指定、スペース区切りで複数人可）`;
-
-    await replyMessage(replyToken, message, accessToken);
-  } else if (step === 'user_name') {
-    const displayName = await getUserDisplayName(groupId, userId, accessToken);
-    const participantCount = data.participantCount || 1;
-    const userNames = data.userNames || [];
-
-    // スペースで区切って複数人名を処理
-    const inputNames = input.trim().split(/\s+/);
-
-    for (let i = 0; i < inputNames.length && userNames.length < participantCount; i++) {
-      let userName = inputNames[i];
-
-      // 全角・半角の@自分に対応
-      if (userName === '@自分' || userName === '＠自分') {
-        userName = displayName;
-      } else if (mentions.length > i && (userName.startsWith('@') || userName.startsWith('＠'))) {
-        const mentionedUserId = mentions[i].userId;
-        userName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
-      }
-
-      userNames.push(userName);
-    }
-
-    session.data.userNames = userNames;
-
-    // まだ全員分入力されていない場合
-    if (userNames.length < participantCount) {
-      const remaining = participantCount - userNames.length;
-      await updateConversationSession(userId, { step: 'user_name', data: session.data });
-      await replyMessage(
-        replyToken,
-        `${userNames.length + 1}人目のユーザー名を入力してください\n（残り${remaining}人）`,
-        accessToken
-      );
-      return;
-    }
-
-    // 全員分入力完了
-    session.step = 'schedule_content';
-    await updateConversationSession(userId, { step: 'schedule_content', data: session.data });
-
-    await replyMessage(replyToken, `予定内容を入力してください`, accessToken);
-  } else if (step === 'schedule_content') {
+  if (step === 'schedule_content') {
     // 予定内容を取得（絵文字も含めてそのまま保存）
     const scheduleContent = input.trim();
     console.log(`Schedule content received: "${scheduleContent}" (length: ${scheduleContent.length})`);
@@ -526,11 +466,12 @@ async function handleAddScheduleConversation(
       accessToken
     );
   } else if (step === 'start_time') {
+    // POSTしたユーザーの表示名を取得
+    const userName = await getUserDisplayName(groupId, userId, accessToken);
+
     // 開始時間のバリデーション
     if (input === 'なし' || input === 'ナシ') {
       // 終日予定として登録
-      const userNames = data.userNames || [];
-      const userName = userNames.length > 0 ? userNames.join('、') : data.userName!;
       const scheduleContent = data.scheduleContent!;
       const dateStr = data.scheduleDate!;
 
@@ -555,7 +496,7 @@ async function handleAddScheduleConversation(
 
         await replyMessage(
           replyToken,
-          `終了時間を入力してください\n（例: 16:00）\n「なし」と入力すると開始時間のみの予定になります`,
+          `終了時間を入力してください\n（例: 16:00）\n「なし」と入力すると開始時間+1時間が終了時間になります`,
           accessToken
         );
       } else {
@@ -565,17 +506,21 @@ async function handleAddScheduleConversation(
       await replyMessage(replyToken, '❌ 時間の形式が正しくありません\n例: 14:30\n終日の場合は「なし」と入力', accessToken);
     }
   } else if (step === 'end_time') {
-    const userNames = data.userNames || [];
-    const userName = userNames.length > 0 ? userNames.join('、') : data.userName!;
+    // POSTしたユーザーの表示名を取得
+    const userName = await getUserDisplayName(groupId, userId, accessToken);
     const scheduleContent = data.scheduleContent!;
     const dateStr = data.scheduleDate!;
     const startTime = data.scheduleStartTime!;
 
-    // 「なし」の場合は開始時間のみで登録
+    // 「なし」の場合は開始時間+1時間を終了時間として登録
     if (input === 'なし' || input === 'ナシ') {
-      await createScheduleEvent(calendarId, userName, scheduleContent, dateStr, startTime);
+      const [hour, minute] = startTime.split(':').map(Number);
+      const endHour = (hour + 1) % 24;
+      const endTime = `${String(endHour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 
-      const responseMessage = `✅ 予定を登録しました！\n\n👤 ${userName}\n📝 ${scheduleContent}\n📅 ${dateStr}\n⏰ ${startTime} 〜`;
+      await createScheduleEvent(calendarId, userName, scheduleContent, dateStr, startTime, endTime);
+
+      const responseMessage = `✅ 予定を登録しました！\n\n👤 ${userName}\n📝 ${scheduleContent}\n📅 ${dateStr}\n⏰ ${startTime} 〜 ${endTime}`;
 
       await replyMessage(replyToken, responseMessage, accessToken);
       await deleteConversationSession(userId);

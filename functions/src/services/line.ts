@@ -173,12 +173,12 @@ export function createHelpMessage(): string {
   message += `@予定\n`;
   message += `　→ 対話形式で登録できます\n\n`;
   message += `一括入力の場合:\n`;
-  message += `@予定 名前 内容\n`;
-  message += `@予定 名前 内容 日付\n`;
-  message += `@予定 名前 内容 日付 開始 終了\n\n`;
-  message += `💡 複数人の場合（カンマ区切り）:\n`;
-  message += `@予定 田中,鈴木 会議\n`;
-  message += `@予定 @自分,田中 打合せ 12/20\n\n`;
+  message += `@予定 内容\n`;
+  message += `@予定 内容 日付\n`;
+  message += `@予定 内容 日付 開始\n`;
+  message += `@予定 内容 日付 開始 終了\n\n`;
+  message += `💡 参加者はPOSTしたユーザーが自動設定されます\n`;
+  message += `💡 終了時刻を省略すると開始時刻+1時間になります\n\n`;
 
   // 削除
   message += `🗑️ 支出を削除する\n`;
@@ -242,7 +242,7 @@ export function createQuickHelpMessage(): string {
   message += `@削除 @自分 外食費用 1280 2026/01/01\n\n`;
 
   message += `【予定】\n`;
-  message += `@予定 @自分 会議 2026/01/01 14:30 16:00\n\n`;
+  message += `@予定 会議 2026/01/01 14:30 16:00\n\n`;
 
   message += `【設定】\n`;
   message += `@予算 60000\n`;
