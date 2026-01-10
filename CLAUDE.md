@@ -23,9 +23,11 @@ This is a LINE Bot-based household expense management system integrated with Goo
      ↓
 4. Implement the feature
      ↓
-5. Update @ヘルプ message if user-facing command
+5. Simplify and refine code (using code-simplifier agent)
      ↓
-6. Build and verify
+6. Update @ヘルプ message if user-facing command
+     ↓
+7. Build and verify
 ```
 
 ### What to Document
@@ -80,6 +82,34 @@ kakeibo-tukeru-kun/
 | `make deploy` | Deploy to Cloud Functions |
 | `make pull-cloud-functions` | Sync deployed code to local |
 
+## Code Quality Standards
+
+**CRITICAL: Always simplify and refine code after implementation**
+
+After implementing any feature or making code changes, you MUST:
+
+1. **Automatically use the `code-simplifier` agent** to review and improve the code
+2. **Focus areas for simplification:**
+   - Remove unnecessary complexity
+   - Improve readability and maintainability
+   - Eliminate code duplication
+   - Ensure consistent coding patterns
+   - Simplify logic where possible
+   - Remove redundant comments
+
+3. **When to trigger simplification:**
+   - After implementing a new feature
+   - After modifying existing code
+   - After writing multiple functions or files
+   - Before marking implementation as complete
+
+4. **How to use:**
+   - AI will automatically invoke the `code-simplifier` agent via Task tool
+   - Agent analyzes recently modified code (git diff)
+   - Agent provides simplification suggestions and applies improvements
+
+**Note:** This is NOT a user-invocable command. The AI assistant handles this automatically as part of the development workflow.
+
 ## Development Checklist
 
 When implementing a feature:
@@ -89,6 +119,7 @@ When implementing a feature:
 - [ ] Types added/updated in `functions/src/types/index.ts`
 - [ ] Database functions in `functions/src/services/firestore.ts`
 - [ ] Handler logic implemented
+- [ ] **Code simplified using code-simplifier agent**
 - [ ] `@ヘルプ` updated in `functions/src/services/line.ts`
 - [ ] `npm run build` succeeds
 - [ ] Documentation matches implementation

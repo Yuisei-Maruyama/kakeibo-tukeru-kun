@@ -206,6 +206,17 @@ open-calendar: ## Googleカレンダーを開く
 open-billing: ## GCP請求ダッシュボードを開く
 	@open "https://console.cloud.google.com/billing?project=$(PROJECT_ID)"
 
+.PHONY: open-firestore
+open-firestore: ## Firestoreコンソールを開く
+	@open "https://console.firebase.google.com/project/$(PROJECT_ID)/firestore"
+
+.PHONY: create-subscription-index
+create-subscription-index: ## サブスク一覧用のFirestoreインデックスを作成
+	@echo "🔧 Firestoreインデックス作成ページを開きます..."
+	@open "https://console.firebase.google.com/v1/r/project/$(PROJECT_ID)/firestore/indexes?create_composite=Cl1wcm9qZWN0cy9rYWtlaWJvLWxpbmUtYm90LTQ4MDExMi9kYXRhYmFzZXMvKGRlZmF1bHQpL2NvbGxlY3Rpb25Hcm91cHMvc3Vic2NyaXB0aW9ucy9pbmRleGVzL18QARoLCgdncm91cElkEAEaDAoIaXNBY3RpdmUQARoNCglzdGFydERhdGUQARoMCghfX25hbWVfXxAB"
+	@echo "✅ ブラウザで「インデックスを作成」ボタンをクリックしてください"
+	@echo "⏱️  作成には数分かかります"
+
 # =============================================================================
 # コスト管理
 # =============================================================================
