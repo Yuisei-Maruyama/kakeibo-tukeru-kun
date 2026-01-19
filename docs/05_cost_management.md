@@ -35,11 +35,77 @@ Cloud Scheduler の超過分（3ジョブ × $0.10 ≒ ¥45）のみ発生しま
 
 ---
 
-## 2. GCP 予算アラート設定
+## 2. データベースコスト比較（Firestore vs Cloud SQL）
+
+本プロジェクトでは Firestore を採用していますが、Cloud SQL との詳細なコスト比較を以下に示します。
+
+### 2.1 月額コスト比較
+
+| 項目 | Firestore | Cloud SQL (MySQL) |
+|------|-----------|-------------------|
+| **基本料金** | $0（従量課金） | $7〜25/月（最小インスタンス） |
+| **無料枠** | 読取5万/日、書込2万/日 | なし |
+| **ストレージ** | $0.18/GB/月 | $0.17/GB/月 |
+| **ネットワーク** | 同一リージョン無料 | VPC Connector必要（$0.01/GB〜） |
+
+### 2.2 本プロジェクトでの試算
+
+**Firestore（実際の構成）:**
+| 項目 | 月間想定 | 料金 |
+|------|----------|------|
+| 読取操作 | 約3,000回 | **$0**（無料枠内） |
+| 書込操作 | 約200回 | **$0**（無料枠内） |
+| ストレージ | 約10MB | **$0**（無料枠1GB） |
+| **合計** | | **$0/月** |
+
+**Cloud SQL（仮に採用した場合）:**
+| 項目 | 月間想定 | 料金 |
+|------|----------|------|
+| db-f1-micro インスタンス | 常時起動 | $7.67/月 |
+| ストレージ（10GB SSD） | 最小構成 | $1.70/月 |
+| VPC Connector | Cloud Functions連携用 | $6.11/月〜 |
+| **合計** | | **$15〜20/月** |
+
+### 2.3 年間コスト比較
+
+| データベース | 月額 | 年額 |
+|--------------|------|------|
+| **Firestore** | $0 | **$0** |
+| **Cloud SQL** | $15〜20 | **$180〜240**（約¥27,000〜36,000） |
+
+### 2.4 Firestore がコスト優位な理由
+
+1. **従量課金モデル**
+   - 使った分だけ課金（操作単位）
+   - 低頻度利用では無料枠内で収まる
+
+2. **インスタンス管理不要**
+   - Cloud SQL は停止してもストレージ課金が発生
+   - Firestore は完全にサーバーレス
+
+3. **追加コンポーネント不要**
+   - Cloud Functions との連携にVPC Connectorが不要
+   - ネットワーク設定がシンプル
+
+4. **スケーリングコストの予測可能性**
+   - 利用量に比例した課金
+   - 急なスパイクでもインスタンスサイズ変更不要
+
+### 2.5 Cloud SQL を検討すべきケース
+
+コストが上昇しても Cloud SQL が適する場合：
+- 複雑なSQL（JOIN、サブクエリ）が多数必要
+- 既存のRDBスキーマを移行する
+- 厳格なACIDトランザクションが必須
+- データ分析用のSQLクエリを頻繁に実行
+
+---
+
+## 3. GCP 予算アラート設定
 
 予期せぬ課金を防ぐため、予算アラートを設定します。
 
-### 2.1 コンソールから設定
+### 3.1 コンソールから設定
 
 1. [GCP 予算とアラート](https://console.cloud.google.com/billing/budgets) にアクセス
 2. 「予算を作成」をクリック
@@ -48,7 +114,7 @@ Cloud Scheduler の超過分（3ジョブ × $0.10 ≒ ¥45）のみ発生しま
    - 予算額: `¥500`（または任意の金額）
    - アラートのしきい値: 50%、90%、100%
 
-### 2.2 gcloudコマンドで設定
+### 3.2 gcloudコマンドで設定
 
 ```bash
 # 請求先アカウントIDを取得
@@ -64,7 +130,7 @@ gcloud billing budgets create \
   --threshold-rule=percent=1.0
 ```
 
-### 2.3 Makefileに追加済みのコマンド
+### 3.3 Makefileに追加済みのコマンド
 
 ```bash
 # 予算設定（対話形式）
@@ -73,9 +139,9 @@ make setup-budget
 
 ---
 
-## 3. API クォータ・制限設定
+## 4. API クォータ・制限設定
 
-### 3.1 Cloud Functions の同時実行数制限
+### 4.1 Cloud Functions の同時実行数制限
 
 ```bash
 # 最大インスタンス数を制限（コスト抑制）
@@ -86,7 +152,7 @@ gcloud functions deploy webhook \
 
 既存のデプロイスクリプトには `--max-instances=10` を追加済みです。
 
-### 3.2 Gemini API の利用制限
+### 4.2 Gemini API の利用制限
 
 Google AI Studio で制限を設定:
 
@@ -96,7 +162,7 @@ Google AI Studio で制限を設定:
    - **Requests per minute**: 15（デフォルト）
    - **Requests per day**: 1,500（推奨設定）
 
-### 3.3 Firestore セキュリティルール
+### 4.3 Firestore セキュリティルール
 
 不正アクセスによる大量読み書きを防止:
 
@@ -115,9 +181,9 @@ service cloud.firestore {
 
 ---
 
-## 4. LINE Messaging API プラン
+## 5. LINE Messaging API プラン
 
-### 4.1 プラン比較
+### 5.1 プラン比較
 
 | プラン | 月額 | 無料メッセージ | 追加メッセージ |
 |--------|------|----------------|----------------|
@@ -125,7 +191,7 @@ service cloud.firestore {
 | ライト | ¥5,000 | 5,000通 | ¥不可 |
 | スタンダード | ¥15,000 | 30,000通 | ¥3/通〜 |
 
-### 4.2 推奨設定
+### 5.2 推奨設定
 
 2人で使用する家計簿Botの場合:
 
@@ -135,7 +201,7 @@ service cloud.firestore {
 
 **注意**: 無料枠を超えるとメッセージが送信できなくなります。
 
-### 4.3 メッセージ数の確認方法
+### 5.3 メッセージ数の確認方法
 
 1. [LINE Official Account Manager](https://manager.line.biz/) にアクセス
 2. 対象のアカウントを選択
@@ -143,9 +209,9 @@ service cloud.firestore {
 
 ---
 
-## 5. コスト最適化のベストプラクティス
+## 6. コスト最適化のベストプラクティス
 
-### 5.1 Cloud Functions
+### 6.1 Cloud Functions
 
 | 設定 | 推奨値 | 効果 |
 |------|--------|------|
@@ -154,7 +220,7 @@ service cloud.firestore {
 | 最大インスタンス | 5〜10 | スパイク時のコスト抑制 |
 | 最小インスタンス | 0 | アイドル時のコスト削減 |
 
-### 5.2 Gemini API
+### 6.2 Gemini API
 
 | 最適化 | 方法 |
 |--------|------|
@@ -163,7 +229,7 @@ service cloud.firestore {
 | プロンプト | 簡潔に記述（トークン削減） |
 | キャッシュ | 同一画像の重複解析を防止 |
 
-### 5.3 Firestore
+### 6.3 Firestore
 
 | 最適化 | 方法 |
 |--------|------|
@@ -173,9 +239,9 @@ service cloud.firestore {
 
 ---
 
-## 6. 監視・アラート設定
+## 7. 監視・アラート設定
 
-### 6.1 Cloud Monitoring でアラート作成
+### 7.1 Cloud Monitoring でアラート作成
 
 ```bash
 # エラー率アラート（5%超過で通知）
@@ -185,7 +251,7 @@ gcloud alpha monitoring policies create \
   --condition-filter='resource.type="cloud_function" AND metric.type="cloudfunctions.googleapis.com/function/execution_count" AND metric.labels.status!="ok"'
 ```
 
-### 6.2 推奨アラート
+### 7.2 推奨アラート
 
 | アラート | しきい値 | 目的 |
 |----------|----------|------|
@@ -196,9 +262,9 @@ gcloud alpha monitoring policies create \
 
 ---
 
-## 7. 緊急時の対応
+## 8. 緊急時の対応
 
-### 7.1 課金が急増した場合
+### 8.1 課金が急増した場合
 
 ```bash
 # 1. Cloud Functions を無効化（全6エンドポイント）
@@ -213,7 +279,7 @@ gcloud functions delete monthlyRent --region=asia-northeast1 --quiet
 gcloud projects update PROJECT_ID --no-enable-billing
 ```
 
-### 7.2 Makefileコマンド
+### 8.2 Makefileコマンド
 
 ```bash
 # 緊急停止
@@ -225,7 +291,7 @@ make deploy
 
 ---
 
-## 8. 月次コストチェックリスト
+## 9. 月次コストチェックリスト
 
 毎月確認すべき項目:
 
@@ -236,7 +302,7 @@ make deploy
 
 ---
 
-## 9. 参考リンク
+## 10. 参考リンク
 
 - [GCP 料金計算ツール](https://cloud.google.com/products/calculator)
 - [Cloud Functions 料金](https://cloud.google.com/functions/pricing)
