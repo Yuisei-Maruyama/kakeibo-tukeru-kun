@@ -143,6 +143,26 @@ export function parseDateString(dateStr: string): Date | null {
 }
 
 /**
+ * 指定した日付が現在の月（JST）かどうかを判定
+ * @param dateStr - 判定する日付（YYYY-MM-DD形式の文字列）
+ * @returns 現在の月と同じ場合はtrue
+ */
+export function isCurrentMonthJST(dateStr: string): boolean {
+  const jstNow = getJSTDate();
+  const currentYear = jstNow.getUTCFullYear();
+  const currentMonth = jstNow.getUTCMonth(); // 0-11
+
+  // YYYY-MM-DD形式の文字列をパース
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return false;
+
+  const targetYear = parseInt(parts[0], 10);
+  const targetMonth = parseInt(parts[1], 10) - 1; // 0-11に変換
+
+  return targetYear === currentYear && targetMonth === currentMonth;
+}
+
+/**
  * 年月文字列をパースして年月を返す
  * 対応形式:
  * - M: 今年の指定月（例: 12 → 2024/12）

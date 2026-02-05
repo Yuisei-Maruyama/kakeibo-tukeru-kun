@@ -276,10 +276,9 @@ export async function deleteExpensesByDate(
   date: Date
 ): Promise<Expense[]> {
   const db = getFirestore();
-  const startOfDay = new Date(date);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(date);
-  endOfDay.setHours(23, 59, 59, 999);
+  // UTC基準で1日の範囲を設定
+  const startOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
+  const endOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
 
   const snapshot = await db
     .collection('expenses')
@@ -311,10 +310,9 @@ export async function deleteExpenseByDateAndAmount(
   category: Category
 ): Promise<Expense | null> {
   const db = getFirestore();
-  const startOfDay = new Date(date);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(date);
-  endOfDay.setHours(23, 59, 59, 999);
+  // UTC基準で1日の範囲を設定
+  const startOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
+  const endOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
 
   // インデックス不要なクエリ: userIdとcategoryだけでフィルタ
   const snapshot = await db
@@ -710,10 +708,9 @@ export async function findExpenseWithoutCalendarEventId(
   category: Category
 ): Promise<Expense | null> {
   const db = getFirestore();
-  const startOfDay = new Date(date);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(date);
-  endOfDay.setHours(23, 59, 59, 999);
+  // UTC基準で1日の範囲を設定
+  const startOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
+  const endOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
 
   // userIdとcategoryでフィルタ
   const snapshot = await db

@@ -11,7 +11,7 @@ import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '.
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, createQuickHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
 import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation } from './conversation.js';
 import { generateReportData, getReportPeriod } from './scheduler.js';
-import { parseDateString, parseYearMonthString, getJSTDate } from '../utils/date.js';
+import { parseDateString, parseYearMonthString, getJSTDate, isCurrentMonthJST } from '../utils/date.js';
 
 /**
  * 署名検証
@@ -165,11 +165,15 @@ async function handleImageMessage(
       calendarEventId,
     });
 
-    // 外食費用の場合は残高を更新（カレンダー登録とFirestore保存が成功した後）
-    let newBalance = user.diningBalance;
+    // 外食費用の場合は残高を更新（現在の月の支出のみ）
+    let newBalance: number | undefined;
     if (analysisResult.category === '外食費用') {
-      newBalance = user.diningBalance - analysisResult.amount;
-      await updateDiningBalance(userId, newBalance);
+      if (isCurrentMonthJST(analysisResult.date)) {
+        // 現在の月の支出のみ残高を更新
+        newBalance = user.diningBalance - analysisResult.amount;
+        await updateDiningBalance(userId, newBalance);
+      }
+      // 過去の月の支出は残高に影響を与えない（集計には含まれる）
     }
 
     // 返信メッセージを送信
@@ -179,7 +183,7 @@ async function handleImageMessage(
       user.displayName,
       analysisResult.storeName,
       analysisResult.date,
-      analysisResult.category === '外食費用' ? newBalance : undefined
+      newBalance
     );
 
     await replyMessage(replyToken, responseMessage, accessToken);
@@ -671,23 +675,26 @@ async function handleDeleteCommand(
       }
     }
 
-    // 外食費用の場合は残高を戻す
+    // 外食費用の場合は残高を戻す（現在の月の支出のみ）
+    const expenseDateStr = targetDate.toISOString().split('T')[0];
+    let newBalance: number | undefined;
     if (deletedExpense.category === '外食費用') {
       const user = await getUser(userId);
-      if (user) {
-        const newBalance = user.diningBalance + deletedExpense.amount;
+      if (user && isCurrentMonthJST(expenseDateStr)) {
+        // 現在の月の支出のみ残高を戻す
+        newBalance = user.diningBalance + deletedExpense.amount;
         await updateDiningBalance(userId, newBalance);
       }
     }
 
     const user = await getUser(userId);
     const message = createDeleteMessage(
-      targetDate.toISOString().split('T')[0],
+      expenseDateStr,
       deletedExpense.category,
       deletedExpense.amount,
       deletedExpense.userName,
       deletedExpense.storeName,
-      deletedExpense.category === '外食費用' && user ? user.diningBalance : undefined
+      newBalance
     );
 
     await replyMessage(replyToken, message, accessToken);
@@ -822,11 +829,15 @@ async function handleAddCommand(
       calendarEventId,
     });
 
-    // 外食費用の場合は残高を更新（カレンダー登録とFirestore保存が成功した後）
-    let newBalance = user.diningBalance;
+    // 外食費用の場合は残高を更新（現在の月の支出のみ）
+    let newBalance: number | undefined;
     if (category === '外食費用') {
-      newBalance = user.diningBalance - amount;
-      await updateDiningBalance(userId, newBalance);
+      if (isCurrentMonthJST(dateStr)) {
+        // 現在の月の支出のみ残高を更新
+        newBalance = user.diningBalance - amount;
+        await updateDiningBalance(userId, newBalance);
+      }
+      // 過去の月の支出は残高に影響を与えない（集計には含まれる）
     }
 
     // 返信メッセージを送信
@@ -836,7 +847,7 @@ async function handleAddCommand(
       payerName,
       '手動入力',
       dateStr,
-      category === '外食費用' ? newBalance : undefined
+      newBalance
     );
 
     await replyMessage(replyToken, responseMessage, accessToken);

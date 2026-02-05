@@ -1,6 +1,6 @@
 import { Timestamp } from '@google-cloud/firestore';
 import { ConversationSession, Category } from '../types/index.js';
-import { parseDateString, getJSTDate } from '../utils/date.js';
+import { parseDateString, getJSTDate, isCurrentMonthJST } from '../utils/date.js';
 import {
   saveConversationSession,
   updateConversationSession,
@@ -341,7 +341,7 @@ async function handleAddExpenseConversation(
       }
     }
 
-    const dateStr = `${expenseDate.getFullYear()}-${String(expenseDate.getMonth() + 1).padStart(2, '0')}-${String(expenseDate.getDate()).padStart(2, '0')}`;
+    const dateStr = `${expenseDate.getUTCFullYear()}-${String(expenseDate.getUTCMonth() + 1).padStart(2, '0')}-${String(expenseDate.getUTCDate()).padStart(2, '0')}`;
 
     const calendarEventId = await createCalendarEvent(
       calendarId,
@@ -362,31 +362,23 @@ async function handleAddExpenseConversation(
       calendarEventId,
     });
 
-    if (category === '外食費用') {
-      // 支払い者の残高から金額を引く
+    // 外食費用かつ現在の月の場合のみ残高を更新
+    let newBalance: number | undefined;
+    if (category === '外食費用' && isCurrentMonthJST(dateStr)) {
       const currentBalance = payerUser.diningBalance;
-      const newBalance = currentBalance - amount;
+      newBalance = currentBalance - amount;
       await updateDiningBalance(payerUser.id, newBalance);
-
-      const message = createRegistrationMessage(
-        category,
-        amount,
-        payerName,
-        '手動入力',
-        dateStr,
-        newBalance
-      );
-      await replyMessage(replyToken, message, accessToken);
-    } else {
-      const message = createRegistrationMessage(
-        category,
-        amount,
-        payerName,
-        '手動入力',
-        dateStr
-      );
-      await replyMessage(replyToken, message, accessToken);
     }
+
+    const message = createRegistrationMessage(
+      category,
+      amount,
+      payerName,
+      '手動入力',
+      dateStr,
+      newBalance
+    );
+    await replyMessage(replyToken, message, accessToken);
 
     await deleteConversationSession(userId);
   }
@@ -455,7 +447,7 @@ async function handleAddScheduleConversation(
       scheduleDate = parsedDate;
     }
 
-    const dateStr = `${scheduleDate.getFullYear()}-${String(scheduleDate.getMonth() + 1).padStart(2, '0')}-${String(scheduleDate.getDate()).padStart(2, '0')}`;
+    const dateStr = `${scheduleDate.getUTCFullYear()}-${String(scheduleDate.getUTCMonth() + 1).padStart(2, '0')}-${String(scheduleDate.getUTCDate()).padStart(2, '0')}`;
     session.data.scheduleDate = dateStr;
     session.step = 'start_time';
     await updateConversationSession(userId, { step: 'start_time', data: session.data });
@@ -718,31 +710,23 @@ async function handleDeleteExpenseConversation(
       }
     }
 
-    // 外食費用の場合は残高を戻す
-    if (deletedExpense.category === '外食費用') {
+    // 外食費用かつ現在の月の場合のみ残高を戻す
+    let newBalance: number | undefined;
+    if (deletedExpense.category === '外食費用' && isCurrentMonthJST(dateStr)) {
       const currentBalance = targetUser.diningBalance;
-      const newBalance = currentBalance + deleteAmount;
+      newBalance = currentBalance + deleteAmount;
       await updateDiningBalance(targetUser.id, newBalance);
-
-      const message = createDeleteMessage(
-        dateStr,
-        deletedExpense.category,
-        deleteAmount,
-        deleteUserName,
-        deletedExpense.storeName,
-        newBalance
-      );
-      await replyMessage(replyToken, message, accessToken);
-    } else {
-      const message = createDeleteMessage(
-        dateStr,
-        deletedExpense.category,
-        deleteAmount,
-        deleteUserName,
-        deletedExpense.storeName
-      );
-      await replyMessage(replyToken, message, accessToken);
     }
+
+    const message = createDeleteMessage(
+      dateStr,
+      deletedExpense.category,
+      deleteAmount,
+      deleteUserName,
+      deletedExpense.storeName,
+      newBalance
+    );
+    await replyMessage(replyToken, message, accessToken);
 
     await deleteConversationSession(userId);
   }
@@ -1004,7 +988,7 @@ async function handleAddSubscriptionConversation(
       return;
     }
 
-    const dateStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+    const dateStr = `${startDate.getUTCFullYear()}-${String(startDate.getUTCMonth() + 1).padStart(2, '0')}-${String(startDate.getUTCDate()).padStart(2, '0')}`;
     session.data.subscriptionStartDate = dateStr;
     session.step = 'subscription_interval_unit';
     await updateConversationSession(userId, { step: 'subscription_interval_unit', data: session.data });
@@ -1138,7 +1122,7 @@ export async function showSubscriptionList(
 
     // 開始日をフォーマット
     const startDate = sub.startDate.toDate();
-    const startDateStr = `${startDate.getFullYear()}/${startDate.getMonth() + 1}/${startDate.getDate()}`;
+    const startDateStr = `${startDate.getUTCFullYear()}/${startDate.getUTCMonth() + 1}/${startDate.getUTCDate()}`;
 
     message += `${index + 1}. ${sub.serviceName}\n`;
     message += `　👤 ${sub.payerName}\n`;
@@ -1301,7 +1285,7 @@ async function handleEditSubscriptionConversation(
       ? (selectedSubscription.intervalValue === 1 ? '毎週' : `${selectedSubscription.intervalValue}週間ごと`)
       : (selectedSubscription.intervalValue === 1 ? '毎月' : `${selectedSubscription.intervalValue}ヶ月ごと`);
     const startDate = selectedSubscription.startDate.toDate();
-    const startDateStr = `${startDate.getFullYear()}/${startDate.getMonth() + 1}/${startDate.getDate()}`;
+    const startDateStr = `${startDate.getUTCFullYear()}/${startDate.getUTCMonth() + 1}/${startDate.getUTCDate()}`;
 
     const message = `📝 ${selectedSubscription.serviceName}\n━━━━━━━━━━━━━━━\n現在の設定:\n👤 支払者: ${selectedSubscription.payerName}\n📝 内容: ${selectedSubscription.serviceName}\n💰 金額: ¥${selectedSubscription.amount.toLocaleString()}\n📅 開始日: ${startDateStr}\n🔄 間隔: ${intervalDisplay}\n\n変更する項目を選択してください\n\n1️⃣ 支払者\n2️⃣ 支払い内容\n3️⃣ 金額\n4️⃣ 開始日\n5️⃣ 間隔`;
 
@@ -1444,7 +1428,7 @@ async function handleEditSubscriptionConversation(
           return;
         }
         updateData = { startDate: Timestamp.fromDate(startDate) };
-        newValue = `${startDate.getFullYear()}/${startDate.getMonth() + 1}/${startDate.getDate()}`;
+        newValue = `${startDate.getUTCFullYear()}/${startDate.getUTCMonth() + 1}/${startDate.getUTCDate()}`;
         break;
       }
       case 'interval': {
@@ -1509,7 +1493,7 @@ async function handleEditSubscriptionConversation(
       ? (updatedSubscription.intervalValue === 1 ? '毎週' : `${updatedSubscription.intervalValue}週間ごと`)
       : (updatedSubscription.intervalValue === 1 ? '毎月' : `${updatedSubscription.intervalValue}ヶ月ごと`);
     const startDate = updatedSubscription.startDate.toDate();
-    const startDateStr = `${startDate.getFullYear()}/${startDate.getMonth() + 1}/${startDate.getDate()}`;
+    const startDateStr = `${startDate.getUTCFullYear()}/${startDate.getUTCMonth() + 1}/${startDate.getUTCDate()}`;
 
     const fieldNames: Record<string, string> = {
       payer: '支払者',

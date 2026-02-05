@@ -460,9 +460,9 @@ export function createWelcomeMessage(): string {
 }
 
 /**
- * 日付をフォーマット（YYYY-MM-DD → M/D）
+ * 日付をフォーマット（YYYY-MM-DD → M/D、UTC基準）
  */
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
-  return `${date.getMonth() + 1}/${date.getDate()}`;
+  return `${date.getUTCMonth() + 1}/${date.getUTCDate()}`;
 }

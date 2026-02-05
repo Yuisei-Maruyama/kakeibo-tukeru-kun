@@ -3,8 +3,8 @@ import { Timestamp } from '@google-cloud/firestore';
 import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, getExpenseByCalendarEventId, getUserIdByDisplayName, saveExpense, updateDiningBalance, getUser, getAllActiveSubscriptions, getRent, updateExpense, findExpenseWithoutCalendarEventId, getExpensesByDateRange, deleteExpenseById } from '../services/firestore.js';
 import { pushMessage, createReportMessage } from '../services/line.js';
 import { getTodaySchedules, getMonthlyExpenseEvents, createCalendarEvent } from '../services/calendar.js';
-import { ReportData, ReportType, UserExpenses, MonthlySummary } from '../types/index.js';
-import { getJSTYear, getJSTMonth, getJSTInfo } from '../utils/date.js';
+import { ReportData, ReportType, UserExpenses, MonthlySummary, Category } from '../types/index.js';
+import { getJSTYear, getJSTMonth, getJSTInfo, isCurrentMonthJST } from '../utils/date.js';
 
 /**
  * 定期レポートハンドラー
@@ -68,34 +68,37 @@ export async function handleScheduledReport(req: Request, res: Response): Promis
 }
 
 /**
- * レポート期間を取得
+ * レポート期間を取得（UTC基準）
  */
 export function getReportPeriod(date: Date, reportType: ReportType): { start: Date; end: Date } {
-  const year = date.getFullYear();
-  const month = date.getMonth();
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
 
   if (reportType === 'mid-month') {
     // 1日〜15日
     return {
-      start: new Date(year, month, 1),
-      end: new Date(year, month, 15, 23, 59, 59, 999),
+      start: new Date(Date.UTC(year, month, 1, 0, 0, 0, 0)),
+      end: new Date(Date.UTC(year, month, 15, 23, 59, 59, 999)),
     };
   } else {
     // 16日〜月末
     return {
-      start: new Date(year, month, 16),
-      end: new Date(year, month + 1, 0, 23, 59, 59, 999),
+      start: new Date(Date.UTC(year, month, 16, 0, 0, 0, 0)),
+      end: new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999)),
     };
   }
 }
 
 /**
- * 月末かどうかを判定
+ * 月末かどうかを判定（UTC基準）
  */
 function isLastDayOfMonth(date: Date): boolean {
-  const tomorrow = new Date(date);
-  tomorrow.setDate(date.getDate() + 1);
-  return tomorrow.getMonth() !== date.getMonth();
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+  // 翌日が次の月かどうかをチェック
+  const lastDayOfMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return day === lastDayOfMonth;
 }
 
 /**
@@ -144,10 +147,10 @@ export async function generateReportData(
     });
   }
 
-  // 現在の外食担当者を判定
+  // 現在の外食担当者を判定（UTC基準）
   let currentPayer: string | undefined;
   if (settings) {
-    const day = startDate.getDate();
+    const day = startDate.getUTCDate();
     if (day <= 15) {
       const payerUser = users.find(u => u.id === settings.firstHalfPayerId);
       currentPayer = payerUser?.displayName;
@@ -168,9 +171,9 @@ export async function generateReportData(
     currentPayer,
   };
 
-  // 月末の場合は月間サマリーを追加
+  // 月末の場合は月間サマリーを追加（expensesSummaryを再利用）
   if (reportType === 'end-month') {
-    reportData.monthlySummary = await generateMonthlySummary(users, settings?.monthlyBudget || 50000);
+    reportData.monthlySummary = generateMonthlySummary(users, settings?.monthlyBudget || 50000, expensesSummary);
   }
 
   return reportData;
@@ -178,20 +181,15 @@ export async function generateReportData(
 
 /**
  * 月間サマリーを生成
+ * @param users ユーザー情報
+ * @param monthlyBudget 月間予算
+ * @param expensesSummary 支出サマリー（generateReportDataから渡される）
  */
-async function generateMonthlySummary(
+function generateMonthlySummary(
   users: Array<{ id: string; displayName: string; diningBalance: number }>,
-  monthlyBudget: number
-): Promise<MonthlySummary> {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const monthStart = new Date(year, month, 1);
-  const monthEnd = new Date(year, month + 1, 0, 23, 59, 59, 999);
-
-  // 月間の支出を取得
-  const expensesSummary = await getExpensesSummary(monthStart, monthEnd);
-
+  monthlyBudget: number,
+  expensesSummary: Map<string, Map<Category, number>>
+): MonthlySummary {
   // 外食費用の貯金額を計算
   const diningSavings = users.map(user => {
     const userExpenses = expensesSummary.get(user.id);
@@ -218,6 +216,35 @@ async function generateMonthlySummary(
     };
   });
 
+  // 旅行費用の精算を計算
+  const travelTotals = users.map(user => {
+    const userExpenses = expensesSummary.get(user.id);
+    const travelTotal = userExpenses?.get('旅行費用') || 0;
+
+    return {
+      userId: user.id,
+      userName: user.displayName,
+      total: travelTotal,
+    };
+  });
+
+  // ユーザーが2人未満の場合は精算なし
+  if (users.length < 2) {
+    return {
+      diningSavings,
+      shoppingSettlement: {
+        users: shoppingTotals,
+        difference: 0,
+        refundAmount: 0,
+      },
+      travelSettlement: {
+        users: travelTotals,
+        difference: 0,
+        refundAmount: 0,
+      },
+    };
+  }
+
   // 買い物費用の精算額を計算
   const shoppingAmounts = shoppingTotals.map(u => u.total);
   const shoppingDifference = Math.abs(shoppingAmounts[0] - shoppingAmounts[1]);
@@ -235,18 +262,6 @@ async function generateMonthlySummary(
       shoppingRefundTo = shoppingTotals[0].userName;
     }
   }
-
-  // 旅行費用の精算を計算
-  const travelTotals = users.map(user => {
-    const userExpenses = expensesSummary.get(user.id);
-    const travelTotal = userExpenses?.get('旅行費用') || 0;
-
-    return {
-      userId: user.id,
-      userName: user.displayName,
-      total: travelTotal,
-    };
-  });
 
   // 旅行費用の精算額を計算
   const travelAmounts = travelTotals.map(u => u.total);
@@ -367,12 +382,12 @@ export async function handleDailyScheduleNotification(_req: Request, res: Respon
 }
 
 /**
- * 日付をフォーマット（YYYY-MM-DD）
+ * 日付をフォーマット（YYYY-MM-DD、UTC基準）
  */
 function formatDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
 
@@ -430,8 +445,8 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
               continue;
             }
 
-            // 外食費用の残高調整（旧金額を戻して新金額を引く）
-            if (existingExpense.category === '外食費用' || event.category === '外食費用') {
+            // 外食費用の残高調整（現在の月の支出のみ）
+            if ((existingExpense.category === '外食費用' || event.category === '外食費用') && isCurrentMonthJST(event.date)) {
               const oldUserId = existingExpense.userId;
               const oldUser = await getUser(oldUserId);
 
@@ -510,8 +525,8 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
           calendarEventId: event.eventId,
         });
 
-        // 外食費用の場合は残高を更新
-        if (event.category === '外食費用') {
+        // 外食費用かつ現在の月の場合のみ残高を更新
+        if (event.category === '外食費用' && isCurrentMonthJST(event.date)) {
           const user = await getUser(userId);
           if (user) {
             const newBalance = user.diningBalance - event.amount;
@@ -545,8 +560,10 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
         try {
           console.log(`Deleting expense (calendar event removed): ${expense.calendarEventId} - ${expense.userName} ¥${expense.amount}`);
 
-          // 外食費用の場合は残高を戻す
-          if (expense.category === '外食費用') {
+          // 外食費用かつ現在の月の場合のみ残高を戻す
+          const expenseDate = expense.date.toDate();
+          const expenseDateStr = `${expenseDate.getUTCFullYear()}-${String(expenseDate.getUTCMonth() + 1).padStart(2, '0')}-${String(expenseDate.getUTCDate()).padStart(2, '0')}`;
+          if (expense.category === '外食費用' && isCurrentMonthJST(expenseDateStr)) {
             const user = await getUser(expense.userId);
             if (user) {
               const restoredBalance = user.diningBalance + expense.amount;
@@ -721,7 +738,7 @@ export async function handleMonthlySubscriptions(req: Request, res: Response): P
 }
 
 /**
- * 指定月の配送/支払い日を計算
+ * 指定月の配送/支払い日を計算（UTC基準）
  * @param startDate 開始日
  * @param intervalUnit 間隔単位（week / month）
  * @param intervalValue 間隔数値
@@ -738,9 +755,9 @@ function calculateDeliveryDatesForMonth(
 ): Date[] {
   const deliveryDates: Date[] = [];
 
-  // 開始日を正規化（時間部分を除去）
-  const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-  const end = new Date(monthEnd.getFullYear(), monthEnd.getMonth(), monthEnd.getDate());
+  // 開始日を正規化（時間部分を除去、UTC基準）
+  const start = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()));
+  const end = new Date(Date.UTC(monthEnd.getUTCFullYear(), monthEnd.getUTCMonth(), monthEnd.getUTCDate()));
 
   // 開始日が対象月より後の場合は空配列を返す
   if (start > end) {
@@ -766,17 +783,17 @@ function calculateDeliveryDatesForMonth(
       current = new Date(current.getTime() + intervalDays * msPerDay);
     }
   } else {
-    // 月単位の計算
-    let currentYear = start.getFullYear();
-    let currentMonth = start.getMonth();
-    const startDay = start.getDate();
+    // 月単位の計算（UTC基準）
+    let currentYear = start.getUTCFullYear();
+    let currentMonth = start.getUTCMonth();
+    const startDay = start.getUTCDate();
 
     // 開始日から対象月の範囲内の日付を計算
     while (true) {
-      // 該当月の日付を生成（日付が存在しない場合は月末に調整）
-      const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+      // 該当月の日付を生成（日付が存在しない場合は月末に調整、UTC基準）
+      const daysInMonth = new Date(Date.UTC(currentYear, currentMonth + 1, 0)).getUTCDate();
       const day = Math.min(startDay, daysInMonth);
-      const current = new Date(currentYear, currentMonth, day);
+      const current = new Date(Date.UTC(currentYear, currentMonth, day));
 
       // 対象月を過ぎたら終了
       if (current > end) {
@@ -796,7 +813,7 @@ function calculateDeliveryDatesForMonth(
       }
 
       // 無限ループ防止（開始日が対象月より前で、intervalValueが大きすぎる場合）
-      if (currentYear > end.getFullYear() + 1) {
+      if (currentYear > end.getUTCFullYear() + 1) {
         break;
       }
     }

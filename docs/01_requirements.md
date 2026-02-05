@@ -4,6 +4,58 @@
 
 LINE と Google カレンダーを連携した家計簿管理システム。レシートや支払い画面のスクショを LINE で送信するだけで、自動的に支出を記録・管理できる。
 
+---
+
+## 🌏 タイムゾーン仕様（重要）
+
+**本システムは日本時間（JST、UTC+9）で動作することを保証します。**
+
+### タイムゾーン設計原則
+
+| 項目 | 仕様 |
+|------|------|
+| **基準タイムゾーン** | JST（日本標準時、UTC+9） |
+| **日付境界** | JST 00:00:00 〜 23:59:59 |
+| **月の定義** | JST基準での1日〜月末 |
+| **Cloud Functions実行環境** | UTC（内部でJSTに変換） |
+
+### 実装ルール（開発者向け）
+
+```
+⚠️ Cloud FunctionsはUTC環境で動作するため、以下のルールを厳守すること：
+
+1. Date オブジェクトの作成
+   ✅ new Date(Date.UTC(year, month, day, ...))
+   ❌ new Date(year, month, day, ...)
+
+2. Date から年月日を取得
+   ✅ date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()
+   ❌ date.getFullYear(), date.getMonth(), date.getDate()
+
+3. 日付の設定
+   ✅ Date.UTC() で新しい Date を作成
+   ❌ setHours(), setDate() などのローカルメソッド
+
+4. JST現在時刻の取得
+   ✅ utils/date.ts の getJSTDate() を使用
+   ❌ new Date() を直接使用
+
+5. 日付文字列のフォーマット
+   ✅ utils/date.ts の formatDateYYYYMMDD() を使用
+   ✅ date.getUTCFullYear() + date.getUTCMonth() + date.getUTCDate()
+   ❌ date.getFullYear() + date.getMonth() + date.getDate()
+```
+
+### 影響範囲
+
+- 支出の日付判定（どの月に属するか）
+- 残高の更新（現在月の支出のみ）
+- 定期レポートの期間計算
+- サブスクリプションの配送日計算
+- カレンダー同期の日付範囲
+
+---
+
 ## 2. 機能要件
 
 ### 2.1 画像解析・カレンダー登録機能
@@ -1408,6 +1460,9 @@ Bot: ⚠️ 家賃情報が登録されていません
 - **各ユーザーが月5万円の残金を保有**
 - 残金は**ユーザーごとに独立**して管理される
 - 外食費用の支出は**支払いを行ったユーザーの残金から差し引かれる**
+- **残高の更新は現在の月の支出のみに適用**
+  - 過去の月の支出を登録しても、現在の月の残高には影響しない
+  - 例: 2月に1月の支出を登録した場合、支出は1月の集計に含まれるが、2月の残高は変わらない
 
 ##### 半月担当制
 - **1日〜15日**: ユーザーAが支払い担当
