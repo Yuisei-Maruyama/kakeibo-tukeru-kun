@@ -1065,32 +1065,55 @@ async function handleAddSubscriptionConversation(
 
 /**
  * サブスク用の日付パース（M/D または YYYY/M/D形式）（JST）
+ * 存在しない日付（例: 2/29の非閏年）の場合は、その月の月末に調整
  */
 function parseSubscriptionDate(input: string): Date | null {
+  // 月と日の範囲チェック用
+  const isValidMonthDay = (month: number, day: number) =>
+    month >= 1 && month <= 12 && day >= 1 && day <= 31;
+
   // YYYY/M/D または YYYY-M-D 形式
   const fullMatch = input.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
   if (fullMatch) {
     const year = parseInt(fullMatch[1], 10);
     const month = parseInt(fullMatch[2], 10);
     const day = parseInt(fullMatch[3], 10);
+    if (!isValidMonthDay(month, day)) return null;
     const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-    if (!isNaN(date.getTime()) && date.getUTCMonth() === month - 1) {
+    if (!isNaN(date.getTime())) {
+      // 日付が翌月にずれた場合（例: 2/30 → 3/2）、月末に調整
+      if (date.getUTCMonth() !== month - 1) {
+        const lastDay = new Date(Date.UTC(year, month, 0, 0, 0, 0, 0));
+        console.log(`Date adjusted: ${year}/${month}/${day} -> ${year}/${month}/${lastDay.getUTCDate()}`);
+        return lastDay;
+      }
       return date;
     }
     return null;
   }
 
-  // M/D 形式（今年として扱う）
+  // M/D 形式（今年として扱う、存在しない場合は月末に調整）
   const shortMatch = input.match(/^(\d{1,2})[\/\-](\d{1,2})$/);
   if (shortMatch) {
     const month = parseInt(shortMatch[1], 10);
     const day = parseInt(shortMatch[2], 10);
+    if (!isValidMonthDay(month, day)) return null;
+
     const jstDate = getJSTDate();
-    const year = jstDate.getUTCFullYear();
-    const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-    if (!isNaN(date.getTime()) && date.getUTCMonth() === month - 1) {
+    const currentYear = jstDate.getUTCFullYear();
+
+    // 今年の指定月で試す
+    const date = new Date(Date.UTC(currentYear, month - 1, day, 0, 0, 0, 0));
+    if (!isNaN(date.getTime())) {
+      // 日付が翌月にずれた場合（例: 2/30 → 3/2）、月末に調整
+      if (date.getUTCMonth() !== month - 1) {
+        const lastDay = new Date(Date.UTC(currentYear, month, 0, 0, 0, 0, 0));
+        console.log(`Date adjusted: ${month}/${day} -> ${month}/${lastDay.getUTCDate()} (${currentYear})`);
+        return lastDay;
+      }
       return date;
     }
+
     return null;
   }
 

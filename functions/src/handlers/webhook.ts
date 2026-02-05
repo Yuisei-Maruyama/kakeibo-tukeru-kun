@@ -6,7 +6,7 @@ import { Category, ConversationSession, ReportType } from '../types/index.js';
 
 // Services
 import { analyzeReceiptImage } from '../services/gemini.js';
-import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession, getUserByDisplayNamePartial } from '../services/firestore.js';
+import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession, getUserByDisplayNamePartial, recalculateAllDiningBalances } from '../services/firestore.js';
 import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '../services/calendar.js';
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, createQuickHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
 import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation } from './conversation.js';
@@ -430,10 +430,17 @@ async function handleBalanceCommand(replyToken: string, accessToken: string): Pr
 
 /**
  * 予算コマンド処理
+ * 予算変更時は全ユーザーの残高を再計算する
+ * 計算式: 新しい残高 = 新予算 - balanceResetAt以降の外食支出合計
  */
 async function handleBudgetCommand(replyToken: string, newBudget: number, accessToken: string): Promise<void> {
+  // Settings を更新
   await updateSettings({ monthlyBudget: newBudget });
-  const message = createBudgetUpdateMessage(newBudget);
+
+  // 全ユーザーの残高を再計算
+  const balanceChanges = await recalculateAllDiningBalances(newBudget);
+
+  const message = createBudgetUpdateMessage(newBudget, balanceChanges);
   await replyMessage(replyToken, message, accessToken);
 }
 

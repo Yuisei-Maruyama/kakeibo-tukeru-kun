@@ -285,11 +285,17 @@ export function createBalanceMessage(
 /**
  * 予算変更メッセージを生成
  */
-export function createBudgetUpdateMessage(newBudget: number): string {
+export function createBudgetUpdateMessage(
+  newBudget: number,
+  balanceChanges: Array<{ userName: string; oldBalance: number; newBalance: number }>
+): string {
   let message = `✅ 予算を変更しました！\n\n`;
   message += `📝 新しい予算: ￥${newBudget.toLocaleString()}/人/月\n\n`;
-  message += `※ 次回の月次リセット時から適用されます\n`;
-  message += `※ 今月の残高には影響しません`;
+  message += `【残高再計算】\n`;
+  for (const change of balanceChanges) {
+    message += `${change.userName}: ￥${change.oldBalance.toLocaleString()} → ￥${change.newBalance.toLocaleString()}\n`;
+  }
+  message += `\n※ 今月の残高が即時再計算されました`;
   return message;
 }
 

@@ -148,6 +148,61 @@ export async function resetAllDiningBalances(monthlyBudget: number): Promise<voi
   console.log(`Reset dining balances for ${users.length} users`);
 }
 
+/**
+ * 全ユーザーの外食残高を新予算で再計算
+ * 計算式: 新しい残高 = 新予算 - balanceResetAt以降の外食支出合計
+ * @returns 各ユーザーの旧残高と新残高
+ */
+export async function recalculateAllDiningBalances(
+  newBudget: number
+): Promise<Array<{ userId: string; userName: string; oldBalance: number; newBalance: number }>> {
+  const db = getFirestore();
+  const users = await getAllUsers();
+  const results: Array<{ userId: string; userName: string; oldBalance: number; newBalance: number }> = [];
+
+  for (const user of users) {
+    const balanceResetAt = user.balanceResetAt;
+
+    // balanceResetAt以降の外食支出を取得
+    const expensesSnapshot = await db
+      .collection('expenses')
+      .where('userId', '==', user.id)
+      .where('category', '==', '外食費用')
+      .get();
+
+    // balanceResetAt以降の支出のみ合計
+    let totalExpenses = 0;
+    expensesSnapshot.forEach(doc => {
+      const expense = doc.data();
+      const expenseDate = expense.date as Timestamp;
+      if (expenseDate.toMillis() >= balanceResetAt.toMillis()) {
+        totalExpenses += expense.amount;
+      }
+    });
+
+    // 新しい残高を計算
+    const newBalance = newBudget - totalExpenses;
+    const oldBalance = user.diningBalance;
+
+    // 残高を更新
+    await db.collection('users').doc(user.id).update({
+      diningBalance: newBalance,
+      updatedAt: Timestamp.now(),
+    });
+
+    results.push({
+      userId: user.id,
+      userName: user.displayName,
+      oldBalance,
+      newBalance,
+    });
+
+    console.log(`Recalculated balance for ${user.displayName}: ${oldBalance} -> ${newBalance} (expenses: ${totalExpenses})`);
+  }
+
+  return results;
+}
+
 // =============================================================================
 // 支出操作
 // =============================================================================
