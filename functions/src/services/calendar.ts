@@ -1,5 +1,6 @@
 import { google, calendar_v3 } from 'googleapis';
 import { CalendarEventParams, Category } from '../types/index.js';
+import { getAllUsers } from './firestore.js';
 
 /**
  * Google Calendar APIクライアント
@@ -25,18 +26,31 @@ function getCalendarClient(): calendar_v3.Calendar {
 function getColorId(category: Category | '予定'): string {
   switch (category) {
     case '外食費用':
-      return '4'; // コーラルピンク
+      return '4'; // フラミンゴ
     case '買い物費用':
-      return '7'; // シアン
+      return '5'; // バナナ
     case '旅行費用':
-      return '1'; // ラベンダー（紫）
+      return '1'; // ラベンダー
     case '家賃費用':
-      return '5'; // バナナ（黄色）
+      return '10'; // バジル
     case '予定':
-      return '10'; // バジル（緑）
+      return '8'; // グラファイト（デフォルト）
     default:
       return '1'; // デフォルト
   }
+}
+
+/**
+ * ユーザーごとの予定カラーIDを取得
+ * 登録順（createdAt asc）で1番目→グラファイト(8)、2番目→ピーコック(7)
+ */
+export async function getScheduleColorForUser(userName: string): Promise<string> {
+  const users = await getAllUsers();
+  const index = users.findIndex(u => u.displayName === userName);
+  if (index === 1) {
+    return '7'; // ピーコック（2番目のユーザー）
+  }
+  return '8'; // グラファイト（1番目のユーザーまたはデフォルト）
 }
 
 /**
@@ -146,66 +160,46 @@ export async function createScheduleEvent(
   scheduleContent: string,
   date: string,
   startTime?: string,
-  endTime?: string
+  endTime?: string,
+  colorIdOverride?: string
 ): Promise<string> {
   try {
     const calendar = getCalendarClient();
 
-    const summary = `[予定] ${userName} - ${scheduleContent}`;
+    const summary = scheduleContent;
     const description = `予定: ${scheduleContent}\n担当: ${userName}\n登録元: LINE家計簿Bot`;
+    const colorId = colorIdOverride || getColorId('予定');
 
     let event: calendar_v3.Schema$Event;
 
-    if (startTime && endTime) {
-      // 開始時間と終了時間が両方指定されている場合
+    if (startTime) {
       const startDateTime = `${date}T${startTime}:00+09:00`;
-      const endDateTime = `${date}T${endTime}:00+09:00`;
+      let endDateTime: string;
+
+      if (endTime) {
+        endDateTime = `${date}T${endTime}:00+09:00`;
+      } else {
+        // 開始時間のみ指定の場合は1時間後を終了時間とする
+        const startDate = new Date(startDateTime);
+        const endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+        endDateTime = endDate.toISOString().replace(/\.\d{3}Z$/, '+09:00');
+      }
 
       event = {
         summary,
         description,
-        start: {
-          dateTime: startDateTime,
-          timeZone: 'Asia/Tokyo',
-        },
-        end: {
-          dateTime: endDateTime,
-          timeZone: 'Asia/Tokyo',
-        },
-        colorId: getColorId('予定'),
-      };
-    } else if (startTime && !endTime) {
-      // 開始時間のみ指定の場合は1時間後を終了時間とする
-      const startDateTime = `${date}T${startTime}:00+09:00`;
-      const startDate = new Date(startDateTime);
-      const endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
-      const endDateTime = endDate.toISOString().replace(/\.\d{3}Z$/, '+09:00');
-
-      event = {
-        summary,
-        description,
-        start: {
-          dateTime: startDateTime,
-          timeZone: 'Asia/Tokyo',
-        },
-        end: {
-          dateTime: endDateTime,
-          timeZone: 'Asia/Tokyo',
-        },
-        colorId: getColorId('予定'),
+        start: { dateTime: startDateTime, timeZone: 'Asia/Tokyo' },
+        end: { dateTime: endDateTime, timeZone: 'Asia/Tokyo' },
+        colorId,
       };
     } else {
       // 時間指定がない場合は終日イベント
       event = {
         summary,
         description,
-        start: {
-          date,
-        },
-        end: {
-          date,
-        },
-        colorId: getColorId('予定'),
+        start: { date },
+        end: { date },
+        colorId,
       };
     }
 
@@ -275,16 +269,27 @@ export async function getTodaySchedules(
 
     const events = await getCalendarEvents(calendarId, startOfDay, endOfDay);
 
-    // 予定（colorId: 10）または タイトルに「予定」を含むイベントをフィルター
+    // 予定（colorId: 7, 8, 10）または タイトルに「予定」を含むイベントをフィルター
+    const scheduleColorIds = ['7', '8', '10'];
     const schedules = events
       .filter(event => {
         const summary = event.summary || '';
-        return event.colorId === '10' || summary.includes('予定');
+        return (event.colorId && scheduleColorIds.includes(event.colorId)) || summary.includes('予定');
       })
       .map(event => {
         const summary = event.summary || '';
+        const description = event.description || '';
 
-        // [予定] ユーザー名 - 予定内容 の形式からパース
+        // 新形式: descriptionの「担当:」からuserNameを取得、summaryがそのままcontent
+        const tantoMatch = description.match(/担当:\s*(.+)/);
+        if (tantoMatch && !summary.startsWith('[予定]')) {
+          return {
+            userName: tantoMatch[1].trim(),
+            content: summary.trim(),
+          };
+        }
+
+        // 旧形式: [予定] ユーザー名 - 予定内容 の形式からパース
         const match = summary.match(/\[予定\]\s*(.+?)\s*-\s*(.+)/);
         if (match) {
           return {
@@ -293,34 +298,7 @@ export async function getTodaySchedules(
           };
         }
 
-        // 「予定」という文言がタイトルに含まれている場合
-        // 例: "田中の予定: 買い物" や "予定 - 会議"
-        if (summary.includes('予定')) {
-          // コロンで分割してみる（例: "田中の予定: 買い物"）
-          const colonMatch = summary.match(/(.+?)の?予定[:：]\s*(.+)/);
-          if (colonMatch) {
-            return {
-              userName: colonMatch[1].trim(),
-              content: colonMatch[2].trim(),
-            };
-          }
-
-          // ハイフンで分割してみる（例: "予定 - 会議"）
-          const dashMatch = summary.match(/予定\s*[-ー]\s*(.+)/);
-          if (dashMatch) {
-            return {
-              userName: '不明',
-              content: dashMatch[1].trim(),
-            };
-          }
-
-          // それ以外はそのまま
-          return {
-            userName: '不明',
-            content: summary,
-          };
-        }
-
+        // フォールバック
         return {
           userName: '不明',
           content: summary,

@@ -7,11 +7,12 @@ import { Category, ConversationSession, ReportType } from '../types/index.js';
 // Services
 import { analyzeReceiptImage } from '../services/gemini.js';
 import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession, getUserByDisplayNamePartial, recalculateAllDiningBalances } from '../services/firestore.js';
-import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent } from '../services/calendar.js';
+import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent, getScheduleColorForUser } from '../services/calendar.js';
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, createQuickHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
-import { startAddExpenseConversation, startAddScheduleConversation, startDeleteExpenseConversation, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation } from './conversation.js';
+import { startAddExpenseConversation, startAddExpenseConversationWithPartialData, startAddScheduleConversation, startDeleteExpenseConversation, startDeleteExpenseConversationWithPartialData, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation, startAddTravelConversationWithPartialData } from './conversation.js';
 import { generateReportData, getReportPeriod } from './scheduler.js';
 import { parseDateString, parseYearMonthString, getJSTDate, isCurrentMonthJST } from '../utils/date.js';
+import { resolvePayerName } from '../utils/payer.js';
 
 /**
  * 署名検証
@@ -574,41 +575,17 @@ async function handleDeleteCommand(
     const parts = args.split(' ').filter(p => p.length > 0);
 
     if (parts.length < 3) {
-      await replyMessage(
-        replyToken,
-        '❌ 形式が正しくありません\n\n使い方: @削除 {支払い者名} {カテゴリー} {金額} [{日付}]\n例: @削除 @自分 外食費用 1280\n例: @削除 @自分 外食費用 1280 12/3\n例: @削除（引数なしで対話形式）',
-        accessToken
-      );
+      // 引数不足の場合は対話モードで不足要素を質問
+      await startDeleteExpenseConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
       return;
     }
 
-    let payerName = parts[0]; // 支払い者名
+    const resolved = await resolvePayerName(parts[0], groupId, userId, accessToken, mentions);
+    let payerName = resolved.payerName;
     const category = parts[1];
     const amountStr = parts[2].replace(/[,，]/g, '');
     const amount = parseInt(amountStr, 10);
     const dateInput = parts.length >= 4 ? parts[3] : null; // 日付（オプション）
-
-    // LINEからコマンド実行者の表示名を取得
-    const displayName = await getUserDisplayName(groupId, userId, accessToken);
-
-    // @自分が指定された場合は、送信者の名前を使用
-    if (payerName === '@自分') {
-      payerName = displayName;
-    }
-    // メンションされたユーザーがいる場合、その表示名を取得
-    else if (mentions.length > 0 && payerName.startsWith('@')) {
-      // メンションの最初のユーザーを使用
-      const mentionedUserId = mentions[0].userId;
-      payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
-    }
-    // @なしの名前の場合、登録済みユーザーから部分一致検索
-    else if (!payerName.startsWith('@')) {
-      const matchedUser = await getUserByDisplayNamePartial(payerName);
-      if (matchedUser) {
-        payerName = matchedUser.displayName;
-      }
-      // 見つからない場合はそのまま入力値を使用
-    }
 
     // カテゴリーチェック
     if (category !== '外食費用' && category !== '買い物費用' && category !== '旅行費用') {
@@ -734,15 +711,13 @@ async function handleAddCommand(
     const parts = args.split(' ').filter(p => p.length > 0);
 
     if (parts.length < 3) {
-      await replyMessage(
-        replyToken,
-        '❌ 形式が正しくありません\n\n使い方: @追加 {支払い者名} {カテゴリー} {金額} [{日付}]\n例: @追加 田中 外食費用 1280\n例: @追加 @自分 外食費用 1280\n例: @追加 田中 外食費用 1280 12/1',
-        accessToken
-      );
+      // 引数不足の場合は対話モードで不足要素を質問
+      await startAddExpenseConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
       return;
     }
 
-    let payerName = parts[0]; // 支払い者名（代理入力可能）
+    const resolved = await resolvePayerName(parts[0], groupId, userId, accessToken, mentions);
+    let payerName = resolved.payerName;
     const category = parts[1];
     const amountStr = parts[2].replace(/[,，]/g, '');
     const amount = parseInt(amountStr, 10);
@@ -750,25 +725,6 @@ async function handleAddCommand(
 
     // LINEからコマンド実行者の表示名を取得
     const displayName = await getUserDisplayName(groupId, userId, accessToken);
-
-    // @自分が指定された場合は、送信者の名前を使用
-    if (payerName === '@自分') {
-      payerName = displayName;
-    }
-    // メンションされたユーザーがいる場合、その表示名を取得
-    else if (mentions.length > 0 && payerName.startsWith('@')) {
-      // メンションの最初のユーザーを使用
-      const mentionedUserId = mentions[0].userId;
-      payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
-    }
-    // @なしの名前の場合、登録済みユーザーから部分一致検索
-    else if (!payerName.startsWith('@')) {
-      const matchedUser = await getUserByDisplayNamePartial(payerName);
-      if (matchedUser) {
-        payerName = matchedUser.displayName;
-      }
-      // 見つからない場合はそのまま入力値を使用
-    }
 
     // カテゴリーチェック
     if (category !== '外食費用' && category !== '買い物費用' && category !== '旅行費用') {
@@ -888,15 +844,13 @@ async function handleTravelCommand(
     const parts = args.split(' ').filter(p => p.length > 0);
 
     if (parts.length < 3) {
-      await replyMessage(
-        replyToken,
-        '❌ 形式が正しくありません\n\n使い方: @旅行 {支払い者名} {金額} {店舗名} [{日付}]\n例: @旅行 @自分 15000 新幹線代\n例: @旅行 @自分 15000 新幹線代 12/20\n例: @旅行（引数なしで対話形式）',
-        accessToken
-      );
+      // 引数不足の場合は対話モードで不足要素を質問
+      await startAddTravelConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
       return;
     }
 
-    let payerName = parts[0]; // 支払い者名
+    const resolved = await resolvePayerName(parts[0], groupId, userId, accessToken, mentions);
+    let payerName = resolved.payerName;
     const amountStr = parts[1].replace(/[,，]/g, '');
     const amount = parseInt(amountStr, 10);
     const storeName = parts[2]; // 店舗名
@@ -904,25 +858,6 @@ async function handleTravelCommand(
 
     // LINEからコマンド実行者の表示名を取得
     const displayName = await getUserDisplayName(groupId, userId, accessToken);
-
-    // @自分が指定された場合は、送信者の名前を使用
-    if (payerName === '@自分') {
-      payerName = displayName;
-    }
-    // メンションされたユーザーがいる場合、その表示名を取得
-    else if (mentions.length > 0 && payerName.startsWith('@')) {
-      // メンションの最初のユーザーを使用
-      const mentionedUserId = mentions[0].userId;
-      payerName = await getUserDisplayName(groupId, mentionedUserId, accessToken);
-    }
-    // @なしの名前の場合、登録済みユーザーから部分一致検索
-    else if (!payerName.startsWith('@')) {
-      const matchedUser = await getUserByDisplayNamePartial(payerName);
-      if (matchedUser) {
-        payerName = matchedUser.displayName;
-      }
-      // 見つからない場合はそのまま入力値を使用
-    }
 
     // 金額チェック
     if (isNaN(amount) || amount <= 0) {
@@ -1114,6 +1049,9 @@ async function handleScheduleCommand(
       endTime = `${String(endHour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     }
 
+    // ユーザーごとの予定カラーを取得
+    const scheduleColorId = await getScheduleColorForUser(userName);
+
     // カレンダーに予定を登録
     await createScheduleEvent(
       calendarId,
@@ -1121,7 +1059,8 @@ async function handleScheduleCommand(
       scheduleContent,
       dateStr,
       startTime,
-      endTime
+      endTime,
+      scheduleColorId
     );
 
     // 返信メッセージを送信

@@ -1,6 +1,6 @@
 import { Timestamp } from '@google-cloud/firestore';
-import { ConversationSession, Category } from '../types/index.js';
-import { parseDateString, getJSTDate, isCurrentMonthJST } from '../utils/date.js';
+import { ConversationSession, ConversationStep, Category } from '../types/index.js';
+import { parseDateString, getJSTDate, isCurrentMonthJST, formatDateYYYYMMDD } from '../utils/date.js';
 import {
   saveConversationSession,
   updateConversationSession,
@@ -21,8 +21,9 @@ import {
   getRent,
   updateRent,
 } from '../services/firestore.js';
-import { createCalendarEvent, createScheduleEvent, deleteCalendarEvent } from '../services/calendar.js';
+import { createCalendarEvent, createScheduleEvent, deleteCalendarEvent, getScheduleColorForUser } from '../services/calendar.js';
 import { replyMessage, createRegistrationMessage, getUserDisplayName, createDeleteMessage } from '../services/line.js';
+import { resolvePayerName } from '../utils/payer.js';
 
 /**
  * 日付文字列（M/D形式）をパースして未来の日付を返す（JST）
@@ -94,6 +95,69 @@ export async function startAddExpenseConversation(
 }
 
 /**
+ * @追加の部分引数付き対話モード開始
+ * 入力済みの引数をセッションに保存し、不足要素のステップから開始
+ */
+export async function startAddExpenseConversationWithPartialData(
+  userId: string,
+  groupId: string,
+  replyToken: string,
+  accessToken: string,
+  partialArgs: string[],
+  mentions: any[]
+): Promise<void> {
+  const data: Record<string, any> = {};
+  let nextStep: ConversationStep = 'category';
+  let promptMessage = '';
+
+  // 1つ目の引数: 支払い者名
+  if (partialArgs.length >= 1) {
+    const resolved = await resolvePayerName(partialArgs[0], groupId, userId, accessToken, mentions);
+    const payerName = resolved.payerName;
+    data.payerName = payerName;
+    if (resolved.payerUserId) {
+      data.payerUserId = resolved.payerUserId;
+    }
+
+    // 2つ目の引数: カテゴリー
+    if (partialArgs.length >= 2) {
+      const catInput = partialArgs[1];
+      let category: Category | null = null;
+      if (catInput === '外食費用' || catInput.includes('外食')) category = '外食費用';
+      else if (catInput === '買い物費用' || catInput.includes('買い物')) category = '買い物費用';
+      else if (catInput === '旅行費用' || catInput.includes('旅行')) category = '旅行費用';
+
+      if (category) {
+        data.category = category;
+        nextStep = 'amount';
+        promptMessage = `📝 支出を登録します\n\n👤 ${payerName}\n📂 ${category}\n\n金額を入力してください（数字のみ）`;
+      } else {
+        // カテゴリーが不正 → カテゴリー選択から
+        nextStep = 'category';
+        promptMessage = `📝 支出を登録します\n\n👤 ${payerName}\n\nカテゴリーを選択してください\n1️⃣ 外食費用\n2️⃣ 買い物費用\n3️⃣ 旅行費用`;
+      }
+    } else {
+      // カテゴリー未入力 → カテゴリー選択から
+      nextStep = 'category';
+      promptMessage = `📝 支出を登録します\n\n👤 ${payerName}\n\nカテゴリーを選択してください\n1️⃣ 外食費用\n2️⃣ 買い物費用\n3️⃣ 旅行費用`;
+    }
+  }
+
+  const session: ConversationSession = {
+    userId,
+    groupId,
+    type: 'add_expense',
+    step: nextStep,
+    data,
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+  };
+
+  await saveConversationSession(session);
+  await replyMessage(replyToken, promptMessage, accessToken);
+}
+
+/**
  * @予定の対話モード開始
  */
 export async function startAddScheduleConversation(
@@ -149,6 +213,63 @@ export async function startDeleteExpenseConversation(
 3️⃣ 旅行費用`;
 
   await replyMessage(replyToken, message, accessToken);
+}
+
+/**
+ * @削除の部分引数付き対話モード開始
+ */
+export async function startDeleteExpenseConversationWithPartialData(
+  userId: string,
+  groupId: string,
+  replyToken: string,
+  accessToken: string,
+  partialArgs: string[],
+  mentions: any[]
+): Promise<void> {
+  const data: Record<string, any> = {};
+  let nextStep: ConversationStep = 'delete_category';
+  let promptMessage = '';
+
+  // 1つ目の引数: 支払い者名
+  if (partialArgs.length >= 1) {
+    const resolved = await resolvePayerName(partialArgs[0], groupId, userId, accessToken, mentions);
+    const deleteUserName = resolved.payerName;
+    data.deleteUserName = deleteUserName;
+
+    // 2つ目の引数: カテゴリー
+    if (partialArgs.length >= 2) {
+      const catInput = partialArgs[1];
+      let category: Category | null = null;
+      if (catInput === '外食費用' || catInput.includes('外食')) category = '外食費用';
+      else if (catInput === '買い物費用' || catInput.includes('買い物')) category = '買い物費用';
+      else if (catInput === '旅行費用' || catInput.includes('旅行')) category = '旅行費用';
+
+      if (category) {
+        data.deleteCategory = category;
+        nextStep = 'delete_amount';
+        promptMessage = `🗑️ 支出を削除します\n\n👤 ${deleteUserName}\n📂 ${category}\n\n削除する支出の金額を入力してください（数字のみ）`;
+      } else {
+        nextStep = 'delete_category';
+        promptMessage = `🗑️ 支出を削除します\n\n👤 ${deleteUserName}\n\n削除するカテゴリーを選択してください\n1️⃣ 外食費用\n2️⃣ 買い物費用\n3️⃣ 旅行費用`;
+      }
+    } else {
+      nextStep = 'delete_category';
+      promptMessage = `🗑️ 支出を削除します\n\n👤 ${deleteUserName}\n\n削除するカテゴリーを選択してください\n1️⃣ 外食費用\n2️⃣ 買い物費用\n3️⃣ 旅行費用`;
+    }
+  }
+
+  const session: ConversationSession = {
+    userId,
+    groupId,
+    type: 'delete_expense',
+    step: nextStep,
+    data,
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+  };
+
+  await saveConversationSession(session);
+  await replyMessage(replyToken, promptMessage, accessToken);
 }
 
 /**
@@ -235,14 +356,21 @@ async function handleAddExpenseConversation(
     }
 
     session.data.category = category;
-    session.step = 'payer_name';
-    await updateConversationSession(userId, { step: 'payer_name', data: session.data });
 
-    await replyMessage(
-      replyToken,
-      `支払い者名を入力してください\n（@自分 で自分の名前、@メンションでユーザー指定）`,
-      accessToken
-    );
+    // payerNameが既に入力済みの場合はamountステップへスキップ
+    if (session.data.payerName) {
+      session.step = 'amount';
+      await updateConversationSession(userId, { step: 'amount', data: session.data });
+      await replyMessage(replyToken, `金額を入力してください（数字のみ）`, accessToken);
+    } else {
+      session.step = 'payer_name';
+      await updateConversationSession(userId, { step: 'payer_name', data: session.data });
+      await replyMessage(
+        replyToken,
+        `支払い者名を入力してください\n（@自分 で自分の名前、@メンションでユーザー指定）`,
+        accessToken
+      );
+    }
   } else if (step === 'payer_name') {
     let payerName = input.trim();
     let payerUserId: string | undefined = undefined;
@@ -341,7 +469,7 @@ async function handleAddExpenseConversation(
       }
     }
 
-    const dateStr = `${expenseDate.getUTCFullYear()}-${String(expenseDate.getUTCMonth() + 1).padStart(2, '0')}-${String(expenseDate.getUTCDate()).padStart(2, '0')}`;
+    const dateStr = formatDateYYYYMMDD(expenseDate);
 
     const calendarEventId = await createCalendarEvent(
       calendarId,
@@ -447,7 +575,7 @@ async function handleAddScheduleConversation(
       scheduleDate = parsedDate;
     }
 
-    const dateStr = `${scheduleDate.getUTCFullYear()}-${String(scheduleDate.getUTCMonth() + 1).padStart(2, '0')}-${String(scheduleDate.getUTCDate()).padStart(2, '0')}`;
+    const dateStr = formatDateYYYYMMDD(scheduleDate);
     session.data.scheduleDate = dateStr;
     session.step = 'start_time';
     await updateConversationSession(userId, { step: 'start_time', data: session.data });
@@ -466,8 +594,9 @@ async function handleAddScheduleConversation(
       // 終日予定として登録
       const scheduleContent = data.scheduleContent!;
       const dateStr = data.scheduleDate!;
+      const scheduleColorId = await getScheduleColorForUser(userName);
 
-      await createScheduleEvent(calendarId, userName, scheduleContent, dateStr);
+      await createScheduleEvent(calendarId, userName, scheduleContent, dateStr, undefined, undefined, scheduleColorId);
 
       const responseMessage = `✅ 予定を登録しました！\n\n👤 ${userName}\n📝 ${scheduleContent}\n📅 ${dateStr}\n⏰ 終日`;
 
@@ -509,8 +638,9 @@ async function handleAddScheduleConversation(
       const [hour, minute] = startTime.split(':').map(Number);
       const endHour = (hour + 1) % 24;
       const endTime = `${String(endHour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+      const scheduleColorId = await getScheduleColorForUser(userName);
 
-      await createScheduleEvent(calendarId, userName, scheduleContent, dateStr, startTime, endTime);
+      await createScheduleEvent(calendarId, userName, scheduleContent, dateStr, startTime, endTime, scheduleColorId);
 
       const responseMessage = `✅ 予定を登録しました！\n\n👤 ${userName}\n📝 ${scheduleContent}\n📅 ${dateStr}\n⏰ ${startTime} 〜 ${endTime}`;
 
@@ -543,7 +673,8 @@ async function handleAddScheduleConversation(
       return;
     }
 
-    await createScheduleEvent(calendarId, userName, scheduleContent, dateStr, startTime, endTime);
+    const scheduleColorId = await getScheduleColorForUser(userName);
+    await createScheduleEvent(calendarId, userName, scheduleContent, dateStr, startTime, endTime, scheduleColorId);
 
     const responseMessage = `✅ 予定を登録しました！\n\n👤 ${userName}\n📝 ${scheduleContent}\n📅 ${dateStr}\n⏰ ${startTime} 〜 ${endTime}`;
 
@@ -584,14 +715,21 @@ async function handleDeleteExpenseConversation(
     }
 
     session.data.deleteCategory = deleteCategory;
-    session.step = 'delete_user_name';
-    await updateConversationSession(userId, { step: 'delete_user_name', data: session.data });
 
-    await replyMessage(
-      replyToken,
-      `削除したい支出の支払い者名を入力してください\n（@自分 で自分の名前、@メンションでユーザー指定）`,
-      accessToken
-    );
+    // deleteUserNameが既に入力済みの場合はdelete_amountステップへスキップ
+    if (session.data.deleteUserName) {
+      session.step = 'delete_amount';
+      await updateConversationSession(userId, { step: 'delete_amount', data: session.data });
+      await replyMessage(replyToken, `削除する支出の金額を入力してください（数字のみ）`, accessToken);
+    } else {
+      session.step = 'delete_user_name';
+      await updateConversationSession(userId, { step: 'delete_user_name', data: session.data });
+      await replyMessage(
+        replyToken,
+        `削除したい支出の支払い者名を入力してください\n（@自分 で自分の名前、@メンションでユーザー指定）`,
+        accessToken
+      );
+    }
   } else if (step === 'delete_user_name') {
     let deleteUserName = input.trim();
 
@@ -637,38 +775,15 @@ async function handleDeleteExpenseConversation(
       const jstDate = getJSTDate();
       deleteDate = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), 0, 0, 0, 0));
     } else {
-      // YYYY/M/D または M/D 形式に対応
-      const dateParts = input.split('/');
-      if (dateParts.length === 3) {
-        // YYYY/M/D 形式
-        const year = parseInt(dateParts[0], 10);
-        const month = parseInt(dateParts[1], 10);
-        const day = parseInt(dateParts[2], 10);
-        deleteDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-
-        if (isNaN(deleteDate.getTime()) || deleteDate.getUTCMonth() !== month - 1) {
-          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
-          return;
-        }
-      } else if (dateParts.length === 2) {
-        // M/D 形式（今年として扱う）
-        const month = parseInt(dateParts[0], 10);
-        const day = parseInt(dateParts[1], 10);
-        const jstDate = getJSTDate();
-        const year = jstDate.getUTCFullYear();
-        deleteDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-
-        if (isNaN(deleteDate.getTime()) || deleteDate.getUTCMonth() !== month - 1) {
-          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
-          return;
-        }
-      } else {
+      const parsedDate = parseDateString(input);
+      if (!parsedDate) {
         await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
         return;
       }
+      deleteDate = parsedDate;
     }
 
-    const dateStr = `${deleteDate.getUTCFullYear()}-${String(deleteDate.getUTCMonth() + 1).padStart(2, '0')}-${String(deleteDate.getUTCDate()).padStart(2, '0')}`;
+    const dateStr = formatDateYYYYMMDD(deleteDate);
 
     const deleteCategory = data.deleteCategory!;
     const deleteUserName = data.deleteUserName!;
@@ -988,7 +1103,7 @@ async function handleAddSubscriptionConversation(
       return;
     }
 
-    const dateStr = `${startDate.getUTCFullYear()}-${String(startDate.getUTCMonth() + 1).padStart(2, '0')}-${String(startDate.getUTCDate()).padStart(2, '0')}`;
+    const dateStr = formatDateYYYYMMDD(startDate);
     session.data.subscriptionStartDate = dateStr;
     session.step = 'subscription_interval_unit';
     await updateConversationSession(userId, { step: 'subscription_interval_unit', data: session.data });
@@ -1855,6 +1970,63 @@ export async function startAddTravelConversation(
 }
 
 /**
+ * @旅行の部分引数付き対話モード開始
+ * 手動入力方式に固定し、入力済みの引数から不足ステップに移行
+ */
+export async function startAddTravelConversationWithPartialData(
+  userId: string,
+  groupId: string,
+  replyToken: string,
+  accessToken: string,
+  partialArgs: string[],
+  mentions: any[]
+): Promise<void> {
+  const data: Record<string, any> = { travelInputMethod: 'manual' };
+  let nextStep: ConversationStep = 'travel_payer_name';
+  let promptMessage = '';
+
+  // 1つ目の引数: 支払い者名
+  if (partialArgs.length >= 1) {
+    const resolved = await resolvePayerName(partialArgs[0], groupId, userId, accessToken, mentions);
+    const payerName = resolved.payerName;
+    data.travelPayerName = payerName;
+    if (resolved.payerUserId) {
+      data.travelPayerUserId = resolved.payerUserId;
+    }
+
+    // 2つ目の引数: 金額
+    if (partialArgs.length >= 2) {
+      const amount = parseInt(partialArgs[1].replace(/[,，]/g, ''), 10);
+      if (!isNaN(amount) && amount > 0) {
+        data.travelAmount = amount;
+        nextStep = 'travel_date';
+        const currentYear = getJSTDate().getUTCFullYear();
+        promptMessage = `🧳 旅行費用を登録します\n\n👤 ${payerName}\n💰 ¥${amount.toLocaleString()}\n\n日付を入力してください\n（例: 12/15、2024/12/15）\n日付形式:\n- M/D: 今年の日付（例: 5/22 → ${currentYear}/5/22）\n- YYYY/M/D: 年を指定（例: 2024/5/22）\n「今日」と入力すると今日の日付になります`;
+      } else {
+        nextStep = 'travel_amount';
+        promptMessage = `🧳 旅行費用を登録します\n\n👤 ${payerName}\n\n金額を入力してください（数字のみ）`;
+      }
+    } else {
+      nextStep = 'travel_amount';
+      promptMessage = `🧳 旅行費用を登録します\n\n👤 ${payerName}\n\n金額を入力してください（数字のみ）`;
+    }
+  }
+
+  const session: ConversationSession = {
+    userId,
+    groupId,
+    type: 'add_travel',
+    step: nextStep,
+    data,
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+  };
+
+  await saveConversationSession(session);
+  await replyMessage(replyToken, promptMessage, accessToken);
+}
+
+/**
  * @旅行の対話処理
  */
 async function handleAddTravelConversation(
@@ -1961,35 +2133,15 @@ async function handleAddTravelConversation(
       const jstDate = getJSTDate();
       travelDate = new Date(Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), 0, 0, 0, 0));
     } else {
-      const dateParts = input.split('/');
-      if (dateParts.length === 3) {
-        const year = parseInt(dateParts[0], 10);
-        const month = parseInt(dateParts[1], 10);
-        const day = parseInt(dateParts[2], 10);
-        travelDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-
-        if (isNaN(travelDate.getTime()) || travelDate.getUTCMonth() !== month - 1) {
-          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
-          return;
-        }
-      } else if (dateParts.length === 2) {
-        const month = parseInt(dateParts[0], 10);
-        const day = parseInt(dateParts[1], 10);
-        const jstDate = getJSTDate();
-        const year = jstDate.getUTCFullYear();
-        travelDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-
-        if (isNaN(travelDate.getTime()) || travelDate.getUTCMonth() !== month - 1) {
-          await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
-          return;
-        }
-      } else {
+      const parsedDate = parseDateString(input);
+      if (!parsedDate) {
         await replyMessage(replyToken, '❌ 日付の形式が正しくありません\n例: 12/15、2024/12/15', accessToken);
         return;
       }
+      travelDate = parsedDate;
     }
 
-    const dateStr = `${travelDate.getUTCFullYear()}-${String(travelDate.getUTCMonth() + 1).padStart(2, '0')}-${String(travelDate.getUTCDate()).padStart(2, '0')}`;
+    const dateStr = formatDateYYYYMMDD(travelDate);
     session.data.travelDate = dateStr;
     session.step = 'travel_store_name';
     await updateConversationSession(userId, { step: 'travel_store_name', data: session.data });

@@ -67,7 +67,7 @@ export async function getUser(userId: string): Promise<User | null> {
  */
 export async function getAllUsers(): Promise<User[]> {
   const db = getFirestore();
-  const usersSnapshot = await db.collection('users').where('isActive', '==', true).get();
+  const usersSnapshot = await db.collection('users').where('isActive', '==', true).orderBy('createdAt', 'asc').get();
   return usersSnapshot.docs.map(doc => doc.data() as User);
 }
 

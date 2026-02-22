@@ -118,16 +118,22 @@ export async function generateReportData(
   const shoppingExpenses: UserExpenses[] = [];
   const travelExpenses: UserExpenses[] = [];
 
+  // レポート期間が今月かどうかを判定（今月でなければ残高を表示しない）
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const isCurrentMonth =
+    startDate.getUTCFullYear() === jstNow.getUTCFullYear() &&
+    startDate.getUTCMonth() === jstNow.getUTCMonth();
+
   for (const user of users) {
     const userExpenses = expensesSummary.get(user.id);
 
-    // 外食費用
+    // 外食費用（今月のみ残高を表示）
     const diningTotal = userExpenses?.get('外食費用') || 0;
     diningExpenses.push({
       userId: user.id,
       userName: user.displayName,
       total: diningTotal,
-      balance: user.diningBalance,
+      balance: isCurrentMonth ? user.diningBalance : undefined,
     });
 
     // 買い物費用
