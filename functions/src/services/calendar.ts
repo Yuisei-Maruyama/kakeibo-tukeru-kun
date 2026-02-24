@@ -298,9 +298,9 @@ export async function getTodaySchedules(
           };
         }
 
-        // フォールバック
+        // フォールバック: Google Calendarの作成者名を使用
         return {
-          userName: '不明',
+          userName: event.creator?.displayName || event.creator?.email?.split('@')[0] || '不明',
           content: summary,
         };
       });
