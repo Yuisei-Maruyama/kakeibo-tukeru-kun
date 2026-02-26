@@ -49,10 +49,53 @@ usage() {
     exit 1
 }
 
-# プロジェクト確認
+# プロジェクト選択
 check_project() {
-    log_info "プロジェクト確認: ${PROJECT_ID}"
-    gcloud config set project "${PROJECT_ID}"
+    local default_project_id="your-gcp-project-id"
+
+    # PROJECT_ID が明示的に指定されている場合はそのまま使用
+    if [ "${PROJECT_ID}" != "${default_project_id}" ]; then
+        log_info "プロジェクト確認: ${PROJECT_ID}"
+        if ! gcloud config set project "${PROJECT_ID}" 2>/dev/null; then
+            log_error "プロジェクト ${PROJECT_ID} の設定に失敗しました"
+            exit 1
+        fi
+        return
+    fi
+
+    log_info "GCP プロジェクト一覧を取得中..."
+    local projects
+    projects=$(gcloud projects list --format="value(projectId)" 2>/dev/null)
+
+    if [ -z "${projects}" ]; then
+        log_error "プロジェクト一覧を取得できませんでした。gcloud auth login を実行してください。"
+        exit 1
+    fi
+
+    echo ""
+    echo "=== GCP プロジェクト一覧 ==="
+    local project_count=1
+    while IFS= read -r project; do
+        echo "  ${project_count}) ${project}"
+        project_count=$((project_count + 1))
+    done <<< "${projects}"
+    echo ""
+
+    local max_selection=$((project_count - 1))
+    read -rp "プロジェクトを番号で選択してください (1-${max_selection}): " selection
+
+    if ! [[ "${selection}" =~ ^[0-9]+$ ]] || [ "${selection}" -lt 1 ] || [ "${selection}" -gt "${max_selection}" ]; then
+        log_error "不正な番号です: ${selection}"
+        exit 1
+    fi
+
+    PROJECT_ID=$(echo "${projects}" | sed -n "${selection}p")
+    log_info "選択されたプロジェクト: ${PROJECT_ID}"
+
+    if ! gcloud config set project "${PROJECT_ID}" 2>/dev/null; then
+        log_error "プロジェクト ${PROJECT_ID} の設定に失敗しました"
+        exit 1
+    fi
 }
 
 # Webhook ハンドラーのデプロイ
