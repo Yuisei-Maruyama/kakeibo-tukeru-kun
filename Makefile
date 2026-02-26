@@ -212,9 +212,10 @@ open-firestore: ## Firestoreコンソールを開く
 
 .PHONY: create-subscription-index
 create-subscription-index: ## サブスク一覧用のFirestoreインデックスを作成
-	@echo "🔧 Firestoreインデックス作成ページを開きます..."
-	@open "https://console.firebase.google.com/v1/r/project/$(PROJECT_ID)/firestore/indexes?create_composite=Cl1wcm9qZWN0cy9rYWtlaWJvLWxpbmUtYm90LTQ4MDExMi9kYXRhYmFzZXMvKGRlZmF1bHQpL2NvbGxlY3Rpb25Hcm91cHMvc3Vic2NyaXB0aW9ucy9pbmRleGVzL18QARoLCgdncm91cElkEAEaDAoIaXNBY3RpdmUQARoNCglzdGFydERhdGUQARoMCghfX25hbWVfXxAB"
-	@echo "✅ ブラウザで「インデックスを作成」ボタンをクリックしてください"
+	@echo "🔧 Firestore コンソールで以下のインデックスを手動作成してください:"
+	@echo "  コレクション: subscriptions"
+	@echo "  フィールド: groupId (Ascending), isActive (Ascending), startDate (Ascending)"
+	@echo "  URL: https://console.firebase.google.com/project/$(PROJECT_ID)/firestore/indexes"
 	@echo "⏱️  作成には数分かかります"
 
 # =============================================================================

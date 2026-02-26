@@ -31,10 +31,10 @@ X-Line-Signature: {signature}
       "timestamp": 1625665242211,
       "source": {
         "type": "group",
-        "groupId": "Ca56f94637c...",
-        "userId": "U4af4980629..."
+        "groupId": "Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "userId": "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       },
-      "replyToken": "757913772c4646b784d4b7ce46d12671"
+      "replyToken": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     }
   ]
 }

@@ -85,7 +85,11 @@ async function fixUserBalance(userId: string) {
 }
 
 // スクリプト実行
-const userId = process.argv[2] || 'REDACTED_USER_ID';
+const userId = process.argv[2];
+if (!userId) {
+  console.error('Usage: npx ts-node fix-balance.ts <userId>');
+  process.exit(1);
+}
 fixUserBalance(userId)
   .then(() => {
     console.log('\n✅ Script completed successfully\n');
