@@ -1,4 +1,4 @@
-# 家計簿つけるくん (Kakeibo Tukeru-kun)
+# 家計ぼっと
 
 > LINE Bot + Google Calendar で家計を自動管理するシステム
 
@@ -8,7 +8,7 @@ A LINE Bot-based household expense management system integrated with Google Cale
 
 ## Overview
 
-**家計簿つけるくん** は、同棲カップル向けの家計管理 LINE Bot です。
+**家計ぼっと** は、誰かと一緒に暮らすユーザー向けの家計管理 LINE Bot です。
 レシートの写真を LINE に送るだけで、AI が自動解析し Google カレンダーに記録。月ごとの精算レポートも自動送信します。
 
 ### Key Features
