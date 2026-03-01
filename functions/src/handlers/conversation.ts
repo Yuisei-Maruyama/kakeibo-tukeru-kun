@@ -350,7 +350,7 @@ export async function handleConversationInput(
     console.error('Error details:', { message: errorMsg, stack: errorStack?.substring(0, 500) });
     await deleteConversationSession(userId);
     try {
-      await replyMessage(replyToken, `❌ エラーが発生しました\n\n詳細: ${errorMsg}`, accessToken);
+      await replyMessage(replyToken, `❌ エラーが発生しました\n\nしばらくしてからもう一度お試しください。`, accessToken);
     } catch (replyError) {
       console.error('Failed to send error reply:', replyError);
     }

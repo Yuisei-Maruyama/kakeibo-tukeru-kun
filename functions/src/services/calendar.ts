@@ -110,10 +110,9 @@ export async function createCalendarEvent(
   } catch (error) {
     console.error('Failed to create calendar event:', error);
     const errorMsg = error instanceof Error ? error.message : '不明なエラー';
-    const calendarIdMasked = calendarId ? `${calendarId.substring(0, 10)}...` : 'undefined';
     console.error('Calendar API error details:', {
       message: errorMsg,
-      calendarId: calendarIdMasked,
+      hasCalendarId: !!calendarId,
       userName,
       amount,
       category,
@@ -140,10 +139,9 @@ export async function deleteCalendarEvent(
   } catch (error) {
     console.error('Failed to delete calendar event:', error);
     const errorMsg = error instanceof Error ? error.message : '不明なエラー';
-    const calendarIdMasked = calendarId ? `${calendarId.substring(0, 10)}...` : 'undefined';
     console.error('Calendar delete error details:', {
       message: errorMsg,
-      calendarId: calendarIdMasked,
+      hasCalendarId: !!calendarId,
       eventId,
       errorType: error instanceof Error ? error.constructor.name : typeof error,
     });
@@ -218,10 +216,9 @@ export async function createScheduleEvent(
   } catch (error) {
     console.error('Failed to create schedule event:', error);
     const errorMsg = error instanceof Error ? error.message : '不明なエラー';
-    const calendarIdMasked = calendarId ? `${calendarId.substring(0, 10)}...` : 'undefined';
     console.error('Calendar API error details:', {
       message: errorMsg,
-      calendarId: calendarIdMasked,
+      hasCalendarId: !!calendarId,
       userName,
       scheduleContent,
       errorType: error instanceof Error ? error.constructor.name : typeof error,

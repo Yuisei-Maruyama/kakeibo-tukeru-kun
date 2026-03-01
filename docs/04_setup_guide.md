@@ -36,10 +36,10 @@ make setup-secrets    # シークレット登録
 
 ```bash
 # プロジェクト作成
-gcloud projects create kakeibo-line-bot --name="家計簿LINE Bot"
+gcloud projects create YOUR_PROJECT_ID --name="家計簿LINE Bot"
 
 # プロジェクトを選択
-gcloud config set project kakeibo-line-bot
+gcloud config set project YOUR_PROJECT_ID
 
 # 課金を有効化（GCPコンソールで実施）
 ```
@@ -117,7 +117,7 @@ gcloud iam service-accounts create kakeibo-calendar \
 
 # キーファイル生成
 gcloud iam service-accounts keys create ./service-account-key.json \
-  --iam-account=kakeibo-calendar@kakeibo-line-bot.iam.gserviceaccount.com
+  --iam-account=kakeibo-calendar@YOUR_PROJECT_ID.iam.gserviceaccount.com
 ```
 
 ### 4.3 カレンダー共有設定
@@ -135,7 +135,7 @@ gcloud iam service-accounts keys create ./service-account-key.json \
 
 1. [Google AI Studio](https://aistudio.google.com/) にアクセス
 2. 「Get API Key」→「Create API Key」
-3. プロジェクト `kakeibo-line-bot` を選択
+3. プロジェクト `YOUR_PROJECT_ID` を選択
 4. 生成された API キーをメモ
 
 ---
@@ -316,7 +316,7 @@ gcloud iam service-accounts create scheduler-invoker \
 # 権限付与
 gcloud functions add-iam-policy-binding scheduledReport \
   --region=asia-northeast1 \
-  --member="serviceAccount:scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com" \
+  --member="serviceAccount:scheduler-invoker@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/cloudfunctions.invoker"
 
 # 15日の集計ジョブ
@@ -324,66 +324,66 @@ gcloud scheduler jobs create http kakeibo-mid-month-report \
   --location=asia-northeast1 \
   --schedule="0 9 15 * *" \
   --time-zone="Asia/Tokyo" \
-  --uri="https://asia-northeast1-kakeibo-line-bot.cloudfunctions.net/scheduledReport" \
+  --uri="https://asia-northeast1-YOUR_PROJECT_ID.cloudfunctions.net/scheduledReport" \
   --http-method=POST \
   --headers="Content-Type=application/json" \
   --message-body='{"reportType":"mid-month"}' \
-  --oidc-service-account-email="scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com"
+  --oidc-service-account-email="scheduler-invoker@YOUR_PROJECT_ID.iam.gserviceaccount.com"
 
 # 月末の集計ジョブ（28-31日に実行し、月末かどうかを関数内でチェック）
 gcloud scheduler jobs create http kakeibo-end-month-report \
   --location=asia-northeast1 \
   --schedule="0 9 28-31 * *" \
   --time-zone="Asia/Tokyo" \
-  --uri="https://asia-northeast1-kakeibo-line-bot.cloudfunctions.net/scheduledReport" \
+  --uri="https://asia-northeast1-YOUR_PROJECT_ID.cloudfunctions.net/scheduledReport" \
   --http-method=POST \
   --headers="Content-Type=application/json" \
   --message-body='{"reportType":"end-month"}' \
-  --oidc-service-account-email="scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com"
+  --oidc-service-account-email="scheduler-invoker@YOUR_PROJECT_ID.iam.gserviceaccount.com"
 
 # 毎朝の予定通知ジョブ
 gcloud scheduler jobs create http kakeibo-daily-schedule-notification \
   --location=asia-northeast1 \
   --schedule="0 7 * * *" \
   --time-zone="Asia/Tokyo" \
-  --uri="https://asia-northeast1-kakeibo-line-bot.cloudfunctions.net/dailyScheduleNotification" \
+  --uri="https://asia-northeast1-YOUR_PROJECT_ID.cloudfunctions.net/dailyScheduleNotification" \
   --http-method=POST \
   --headers="Content-Type=application/json" \
   --message-body='{"type":"daily-schedule"}' \
-  --oidc-service-account-email="scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com"
+  --oidc-service-account-email="scheduler-invoker@YOUR_PROJECT_ID.iam.gserviceaccount.com"
 
 # カレンダー同期ジョブ（毎日深夜3時に実行）
 gcloud scheduler jobs create http kakeibo-calendar-sync \
   --location=asia-northeast1 \
   --schedule="0 3 * * *" \
   --time-zone="Asia/Tokyo" \
-  --uri="https://asia-northeast1-kakeibo-line-bot.cloudfunctions.net/calendarSync" \
+  --uri="https://asia-northeast1-YOUR_PROJECT_ID.cloudfunctions.net/calendarSync" \
   --http-method=POST \
   --headers="Content-Type=application/json" \
   --message-body='{"type":"calendar-sync"}' \
-  --oidc-service-account-email="scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com"
+  --oidc-service-account-email="scheduler-invoker@YOUR_PROJECT_ID.iam.gserviceaccount.com"
 
 # サブスク自動登録ジョブ（毎月1日9時に実行）
 gcloud scheduler jobs create http kakeibo-monthly-subscriptions \
   --location=asia-northeast1 \
   --schedule="0 9 1 * *" \
   --time-zone="Asia/Tokyo" \
-  --uri="https://asia-northeast1-kakeibo-line-bot.cloudfunctions.net/monthlySubscriptions" \
+  --uri="https://asia-northeast1-YOUR_PROJECT_ID.cloudfunctions.net/monthlySubscriptions" \
   --http-method=POST \
   --headers="Content-Type=application/json" \
   --message-body='{"type":"monthly-subscriptions"}' \
-  --oidc-service-account-email="scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com"
+  --oidc-service-account-email="scheduler-invoker@YOUR_PROJECT_ID.iam.gserviceaccount.com"
 
 # 家賃自動登録ジョブ（毎月1日9時に実行）
 gcloud scheduler jobs create http kakeibo-monthly-rent \
   --location=asia-northeast1 \
   --schedule="0 9 1 * *" \
   --time-zone="Asia/Tokyo" \
-  --uri="https://asia-northeast1-kakeibo-line-bot.cloudfunctions.net/monthlyRent" \
+  --uri="https://asia-northeast1-YOUR_PROJECT_ID.cloudfunctions.net/monthlyRent" \
   --http-method=POST \
   --headers="Content-Type=application/json" \
   --message-body='{"type":"monthly-rent"}' \
-  --oidc-service-account-email="scheduler-invoker@kakeibo-line-bot.iam.gserviceaccount.com"
+  --oidc-service-account-email="scheduler-invoker@YOUR_PROJECT_ID.iam.gserviceaccount.com"
 ```
 
 </details>

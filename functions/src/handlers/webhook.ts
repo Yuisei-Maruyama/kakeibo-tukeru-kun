@@ -45,7 +45,6 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
       console.error('401 Unauthorized: Invalid signature', {
         hasSignature: !!signature,
         hasRawBody: !!(req as any).rawBody,
-        bodyPreview: rawBody.substring(0, 100)
       });
       res.status(401).send('Unauthorized');
       return;
@@ -69,7 +68,6 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     console.error('Error details:', { message: errorMsg, stack: errorStack });
     res.status(500).json({
       error: 'Internal server error',
-      details: errorMsg,
     });
   }
 }
@@ -798,7 +796,7 @@ async function handleAddCommand(
     const errorStack = error instanceof Error ? error.stack : '';
     await replyMessage(
       replyToken,
-      `❌ 追加に失敗しました\n\n詳細: ${errorMsg}\n\n${errorStack ? `スタック:\n${errorStack.substring(0, 200)}...` : ''}`,
+      `❌ 追加に失敗しました\n\nしばらくしてからもう一度お試しください。`,
       accessToken
     );
   }
@@ -902,7 +900,7 @@ async function handleTravelCommand(
     const errorStack = error instanceof Error ? error.stack : '';
     await replyMessage(
       replyToken,
-      `❌ 旅行費用の登録に失敗しました\n\n詳細: ${errorMsg}\n\n${errorStack ? `スタック:\n${errorStack.substring(0, 200)}...` : ''}`,
+      `❌ 旅行費用の登録に失敗しました\n\nしばらくしてからもう一度お試しください。`,
       accessToken
     );
   }

@@ -228,7 +228,7 @@ make open-line      # LINE設定
 
 ```
 🔗 Webhook URL:
-  https://asia-northeast1-kakeibo-line-bot.cloudfunctions.net/webhook
+  https://asia-northeast1-YOUR_PROJECT_ID.cloudfunctions.net/webhook
 
 LINE Developers Console で上記URLを設定してください
 ```
@@ -241,7 +241,7 @@ Makefileで使用できる環境変数です。
 
 | 変数 | デフォルト値 | 説明 |
 |------|--------------|------|
-| `PROJECT_ID` | `kakeibo-line-bot` | GCPプロジェクトID |
+| `PROJECT_ID` | `YOUR_PROJECT_ID` | GCPプロジェクトID |
 | `REGION` | `asia-northeast1` | デプロイリージョン |
 
 ### 永続的に変更する場合

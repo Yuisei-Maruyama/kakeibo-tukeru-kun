@@ -318,25 +318,22 @@ export async function handleDailyScheduleNotification(_req: Request, res: Respon
     console.log('Environment variables check:', {
       hasAccessToken: !!accessToken,
       hasCalendarId: !!calendarId,
-      calendarIdPrefix: calendarId ? calendarId.substring(0, 10) + '...' : 'undefined'
     });
 
     const settings = await getSettings();
     console.log('Settings retrieved:', {
       hasSettings: !!settings,
       hasLineGroupId: !!(settings?.lineGroupId),
-      lineGroupIdPrefix: settings?.lineGroupId ? settings.lineGroupId.substring(0, 10) + '...' : 'undefined'
     });
 
     if (!settings || !settings.lineGroupId) {
       const errorMsg = 'Settings not found or lineGroupId not set';
       console.error(errorMsg, {
         settings: settings ? 'exists' : 'null',
-        lineGroupId: settings?.lineGroupId || 'not set'
+        hasLineGroupId: !!(settings?.lineGroupId),
       });
       res.status(500).json({
         error: 'Settings not configured',
-        details: errorMsg
       });
       return;
     }
@@ -382,7 +379,6 @@ export async function handleDailyScheduleNotification(_req: Request, res: Respon
     });
     res.status(500).json({
       error: 'Internal server error',
-      details: errorMsg
     });
   }
 }
