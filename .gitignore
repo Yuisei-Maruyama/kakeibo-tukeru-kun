@@ -56,5 +56,5 @@ temp/
 # Claude Code
 .claude/
 
-note/
+note/*
 !note/note.md
