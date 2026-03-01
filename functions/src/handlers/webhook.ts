@@ -9,7 +9,7 @@ import { analyzeReceiptImage } from '../services/gemini.js';
 import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession, getUserByDisplayNamePartial, recalculateAllDiningBalances } from '../services/firestore.js';
 import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent, getScheduleColorForUser } from '../services/calendar.js';
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, createQuickHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
-import { startAddExpenseConversation, startAddExpenseConversationWithPartialData, startAddScheduleConversation, startDeleteExpenseConversation, startDeleteExpenseConversationWithPartialData, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation, startAddTravelConversationWithPartialData } from './conversation.js';
+import { startAddExpenseConversation, startAddExpenseConversationWithPartialData, startAddScheduleConversation, startDeleteExpenseConversation, startDeleteExpenseConversationWithPartialData, startDeleteExpenseConversationAtDateStep, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation, startAddTravelConversationWithPartialData } from './conversation.js';
 import { generateReportData, getReportPeriod } from './scheduler.js';
 import { parseDateString, parseYearMonthString, getJSTDate, isCurrentMonthJST } from '../utils/date.js';
 import { resolvePayerName } from '../utils/payer.js';
@@ -587,23 +587,15 @@ async function handleDeleteCommand(
     const amount = parseInt(amountStr, 10);
     const dateInput = parts.length >= 4 ? parts[3] : null; // 日付（オプション）
 
-    // カテゴリーチェック
+    // カテゴリーチェック — 不正な場合は対話で補完
     if (category !== '外食費用' && category !== '買い物費用' && category !== '旅行費用') {
-      await replyMessage(
-        replyToken,
-        '❌ カテゴリーは「外食費用」「買い物費用」「旅行費用」のいずれかを指定してください',
-        accessToken
-      );
+      await startDeleteExpenseConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
       return;
     }
 
-    // 金額チェック
+    // 金額チェック — 不正な場合は対話で補完
     if (isNaN(amount) || amount <= 0) {
-      await replyMessage(
-        replyToken,
-        '❌ 正しい金額を入力してください\n例: @削除 @自分 外食費用 1280',
-        accessToken
-      );
+      await startDeleteExpenseConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
       return;
     }
 
@@ -613,11 +605,8 @@ async function handleDeleteCommand(
       // 日付が指定された場合（例: "12/3"、"2024/12/3"）
       const parsedDate = parseDateString(dateInput);
       if (!parsedDate) {
-        await replyMessage(
-          replyToken,
-          '❌ 日付の形式が正しくありません\n例: @削除 @自分 外食費用 1280 12/3\n例: @削除 @自分 外食費用 1280 2024/12/3',
-          accessToken
-        );
+        // 日付が不正な場合は対話で補完
+        await startDeleteExpenseConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
         return;
       }
       targetDate = parsedDate;
@@ -642,10 +631,10 @@ async function handleDeleteCommand(
     const deletedExpense = await deleteExpenseByDateAndAmount(targetUser.id, targetDate, amount, category);
 
     if (!deletedExpense) {
-      await replyMessage(
-        replyToken,
-        '❌ 指定した条件の支出が見つかりません',
-        accessToken
+      // 支出が見つからない場合、日付を対話で補う
+      await startDeleteExpenseConversationAtDateStep(
+        userId, groupId, replyToken, accessToken,
+        payerName, category as Category, amount
       );
       return;
     }
@@ -726,23 +715,15 @@ async function handleAddCommand(
     // LINEからコマンド実行者の表示名を取得
     const displayName = await getUserDisplayName(groupId, userId, accessToken);
 
-    // カテゴリーチェック
+    // カテゴリーチェック — 不正な場合は対話で補完
     if (category !== '外食費用' && category !== '買い物費用' && category !== '旅行費用') {
-      await replyMessage(
-        replyToken,
-        '❌ カテゴリーは「外食費用」「買い物費用」「旅行費用」のいずれかを指定してください',
-        accessToken
-      );
+      await startAddExpenseConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
       return;
     }
 
-    // 金額チェック
+    // 金額チェック — 不正な場合は対話で補完
     if (isNaN(amount) || amount <= 0) {
-      await replyMessage(
-        replyToken,
-        '❌ 正しい金額を入力してください\n例: @追加 田中 外食費用 1280',
-        accessToken
-      );
+      await startAddExpenseConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
       return;
     }
 
@@ -755,11 +736,8 @@ async function handleAddCommand(
       // 日付が指定された場合（例: "12/1"、"2024/12/1"）
       const parsedDate = parseDateString(dateInput);
       if (!parsedDate) {
-        await replyMessage(
-          replyToken,
-          '❌ 日付の形式が正しくありません\n例: @追加 田中 外食費用 1280 12/1\n例: @追加 田中 外食費用 1280 2024/12/1',
-          accessToken
-        );
+        // 日付が不正な場合は対話で補完
+        await startAddExpenseConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
         return;
       }
       expenseDate = parsedDate;
@@ -859,13 +837,9 @@ async function handleTravelCommand(
     // LINEからコマンド実行者の表示名を取得
     const displayName = await getUserDisplayName(groupId, userId, accessToken);
 
-    // 金額チェック
+    // 金額チェック — 不正な場合は対話で補完
     if (isNaN(amount) || amount <= 0) {
-      await replyMessage(
-        replyToken,
-        '❌ 正しい金額を入力してください\n例: @旅行 @自分 15000 新幹線代',
-        accessToken
-      );
+      await startAddTravelConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
       return;
     }
 
@@ -878,11 +852,8 @@ async function handleTravelCommand(
       // 日付が指定された場合（例: "12/20"、"2024/12/20"）
       const parsedDate = parseDateString(dateInput);
       if (!parsedDate) {
-        await replyMessage(
-          replyToken,
-          '❌ 日付の形式が正しくありません\n例: @旅行 @自分 15000 新幹線代 12/20\n例: @旅行 @自分 15000 新幹線代 2024/12/20',
-          accessToken
-        );
+        // 日付が不正な場合は対話で補完
+        await startAddTravelConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
         return;
       }
       expenseDate = parsedDate;

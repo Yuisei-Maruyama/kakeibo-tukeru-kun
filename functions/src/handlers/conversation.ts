@@ -273,6 +273,38 @@ export async function startDeleteExpenseConversationWithPartialData(
 }
 
 /**
+ * @削除のワンライナーで支出が見つからなかった場合、日付入力ステップから対話モードを開始
+ */
+export async function startDeleteExpenseConversationAtDateStep(
+  userId: string,
+  groupId: string,
+  replyToken: string,
+  accessToken: string,
+  deleteUserName: string,
+  deleteCategory: Category,
+  deleteAmount: number
+): Promise<void> {
+  const session: ConversationSession = {
+    userId,
+    groupId,
+    type: 'delete_expense',
+    step: 'delete_date',
+    data: { deleteUserName, deleteCategory, deleteAmount },
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+  };
+
+  await saveConversationSession(session);
+
+  const currentYear = getJSTDate().getUTCFullYear();
+  await replyMessage(
+    replyToken,
+    `❌ 今日の日付では該当する支出が見つかりませんでした\n\n👤 ${deleteUserName}\n📂 ${deleteCategory}\n💰 ¥${deleteAmount.toLocaleString()}\n\n📅 日付を入力してください\n（例: 2/26、${currentYear}/2/26）\n「今日」と入力すると今日の日付になります`,
+    accessToken
+  );
+}
+
+/**
  * 対話モードの入力処理
  */
 export async function handleConversationInput(

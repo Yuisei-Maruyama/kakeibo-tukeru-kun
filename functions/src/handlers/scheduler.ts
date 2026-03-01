@@ -4,7 +4,7 @@ import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, g
 import { pushMessage, createReportMessage } from '../services/line.js';
 import { getTodaySchedules, getMonthlyExpenseEvents, createCalendarEvent } from '../services/calendar.js';
 import { ReportData, ReportType, UserExpenses, MonthlySummary, Category } from '../types/index.js';
-import { getJSTYear, getJSTMonth, getJSTInfo, isCurrentMonthJST } from '../utils/date.js';
+import { getJSTYear, getJSTMonth, getJSTDate, getJSTInfo, isCurrentMonthJST } from '../utils/date.js';
 
 /**
  * 定期レポートハンドラー
@@ -343,7 +343,7 @@ export async function handleDailyScheduleNotification(_req: Request, res: Respon
 
     // JST（日本時間）で今日の日付を取得
     const jstInfo = getJSTInfo();
-    const today = new Date(); // カレンダーAPIに渡すためのDate（内部でJST変換される）
+    const today = getJSTDate();
     console.log(`Fetching schedules for: ${jstInfo.formatted} (JST)`);
 
     const schedules = await getTodaySchedules(calendarId, today);
