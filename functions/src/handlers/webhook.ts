@@ -646,15 +646,14 @@ async function handleDeleteCommand(
       }
     }
 
-    // 外食費用の場合は残高を戻す（現在の月の支出のみ）
+    // 外食費用の場合は支払い者の残高を戻す（現在の月の支出のみ）
     const expenseDateStr = targetDate.toISOString().split('T')[0];
     let newBalance: number | undefined;
     if (deletedExpense.category === '外食費用') {
-      const user = await getUser(userId);
-      if (user && isCurrentMonthJST(expenseDateStr)) {
-        // 現在の月の支出のみ残高を戻す
-        newBalance = user.diningBalance + deletedExpense.amount;
-        await updateDiningBalance(userId, newBalance);
+      const payer = await getUser(targetUser.id);
+      if (payer && isCurrentMonthJST(expenseDateStr)) {
+        newBalance = payer.diningBalance + deletedExpense.amount;
+        await updateDiningBalance(targetUser.id, newBalance);
       }
     }
 

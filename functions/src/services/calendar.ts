@@ -480,7 +480,7 @@ export async function getMonthlyExpenseEvents(
   month: number // 1-12
 ): Promise<ParsedExpenseEvent[]> {
   try {
-    // 当月の開始日・終了日を計算
+    // 当月の開始日・終了日を計算（TZ=Asia/Tokyo 環境でJST基準）
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0, 23, 59, 59, 999);
 
