@@ -104,7 +104,7 @@ deploy_webhook() {
 
     gcloud functions deploy webhook \
         --gen2 \
-        --runtime=nodejs20 \
+        --runtime=nodejs22 \
         --region="${REGION}" \
         --source="${FUNCTIONS_DIR}" \
         --entry-point=webhook \
@@ -132,7 +132,7 @@ deploy_report() {
 
     gcloud functions deploy scheduledReport \
         --gen2 \
-        --runtime=nodejs20 \
+        --runtime=nodejs22 \
         --region="${REGION}" \
         --source="${FUNCTIONS_DIR}" \
         --entry-point=scheduledReport \
@@ -154,7 +154,7 @@ deploy_daily_schedule() {
 
     gcloud functions deploy dailyScheduleNotification \
         --gen2 \
-        --runtime=nodejs20 \
+        --runtime=nodejs22 \
         --region="${REGION}" \
         --source="${FUNCTIONS_DIR}" \
         --entry-point=dailyScheduleNotification \
@@ -176,7 +176,7 @@ deploy_calendar_sync() {
 
     gcloud functions deploy calendarSync \
         --gen2 \
-        --runtime=nodejs20 \
+        --runtime=nodejs22 \
         --region="${REGION}" \
         --source="${FUNCTIONS_DIR}" \
         --entry-point=calendarSync \
@@ -198,7 +198,7 @@ deploy_monthly_subscriptions() {
 
     gcloud functions deploy monthlySubscriptions \
         --gen2 \
-        --runtime=nodejs20 \
+        --runtime=nodejs22 \
         --region="${REGION}" \
         --source="${FUNCTIONS_DIR}" \
         --entry-point=monthlySubscriptions \
@@ -220,7 +220,7 @@ deploy_monthly_rent() {
 
     gcloud functions deploy monthlyRent \
         --gen2 \
-        --runtime=nodejs20 \
+        --runtime=nodejs22 \
         --region="${REGION}" \
         --source="${FUNCTIONS_DIR}" \
         --entry-point=monthlyRent \
@@ -330,9 +330,8 @@ setup_scheduler() {
         --oidc-token-audience="${FUNCTION_URL}" \
         --description="毎月15日9:00に前半（1〜15日）の支出集計レポートをLINEに送信"
 
-    # 月末の集計ジョブ（毎月最終日）
+    # 月末の集計ジョブ（翌月1日に前月分を集計）
     log_info "月末の集計ジョブを設定中..."
-    # Cloud Scheduler は "L" をサポートしないため、28-31日に実行して月末かチェック
 
     # 既存ジョブを削除（存在する場合）
     if gcloud scheduler jobs describe kakeibo-end-month-report --location="${REGION}" &>/dev/null; then
@@ -342,10 +341,10 @@ setup_scheduler() {
             --quiet
     fi
 
-    # 新規作成
+    # 新規作成（毎月1日9:00に実行し、前月16日〜月末分を集計）
     gcloud scheduler jobs create http kakeibo-end-month-report \
         --location="${REGION}" \
-        --schedule="0 9 28-31 * *" \
+        --schedule="0 9 1 * *" \
         --time-zone="Asia/Tokyo" \
         --uri="${FUNCTION_URL}" \
         --http-method=POST \
@@ -353,7 +352,7 @@ setup_scheduler() {
         --message-body='{"reportType":"end-month"}' \
         --oidc-service-account-email="${SA_EMAIL}" \
         --oidc-token-audience="${FUNCTION_URL}" \
-        --description="毎月末9:00に後半（16〜月末）の支出集計・月間精算レポートをLINEに送信"
+        --description="毎月1日9:00に前月後半（16〜月末）の支出集計・月間精算レポートをLINEに送信"
 
     # 毎朝7:00の予定通知ジョブ
     log_info "毎朝の予定通知ジョブを設定中..."

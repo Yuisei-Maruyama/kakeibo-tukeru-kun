@@ -28,10 +28,10 @@ export async function handleScheduledReport(req: Request, res: Response): Promis
 
     const now = new Date(); // getReportPeriodで使用（内部でJST変換）
 
-    // 月末レポートは月末の最終日のみ実行（28-31日スケジュールからの呼び出し対応）
-    if (reportType === 'end-month' && !isLastDayOfMonth(now)) {
-      console.log('Skipping end-month report: not the last day of month');
-      res.status(200).json({ status: 'skipped', reason: 'Not the last day of month' });
+    // 月末レポートは毎月1日のみ実行（前月分を集計）
+    if (reportType === 'end-month' && !isFirstDayOfMonth(now)) {
+      console.log('Skipping end-month report: not the first day of month');
+      res.status(200).json({ status: 'skipped', reason: 'Not the first day of month' });
       return;
     }
 
@@ -48,7 +48,7 @@ export async function handleScheduledReport(req: Request, res: Response): Promis
     await pushMessage(settings.lineGroupId, message, accessToken);
 
     // 月末レポートの場合は月次リセットを実行
-    if (reportType === 'end-month' && isLastDayOfMonth(now)) {
+    if (reportType === 'end-month') {
       await resetAllDiningBalances(settings.monthlyBudget);
       console.log('Monthly balance reset completed');
     }
@@ -81,24 +81,19 @@ export function getReportPeriod(date: Date, reportType: ReportType): { start: Da
       end: new Date(Date.UTC(year, month, 15, 23, 59, 59, 999)),
     };
   } else {
-    // 16日〜月末
+    // 前月16日〜前月末（毎月1日に実行し、前月分を集計）
     return {
-      start: new Date(Date.UTC(year, month, 16, 0, 0, 0, 0)),
-      end: new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999)),
+      start: new Date(Date.UTC(year, month - 1, 16, 0, 0, 0, 0)),
+      end: new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)),
     };
   }
 }
 
 /**
- * 月末かどうかを判定（UTC基準）
+ * 月初（1日）かどうかを判定（UTC基準）
  */
-function isLastDayOfMonth(date: Date): boolean {
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth();
-  const day = date.getUTCDate();
-  // 翌日が次の月かどうかをチェック
-  const lastDayOfMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  return day === lastDayOfMonth;
+function isFirstDayOfMonth(date: Date): boolean {
+  return date.getUTCDate() === 1;
 }
 
 /**
@@ -177,9 +172,14 @@ export async function generateReportData(
     currentPayer,
   };
 
-  // 月末の場合は月間サマリーを追加（expensesSummaryを再利用）
+  // 月末の場合は月間サマリーを追加（月全体の支出データを取得）
   if (reportType === 'end-month') {
-    reportData.monthlySummary = generateMonthlySummary(users, settings?.monthlyBudget || 50000, expensesSummary);
+    const year = startDate.getUTCFullYear();
+    const month = startDate.getUTCMonth();
+    const monthStart = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+    const monthEnd = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
+    const fullMonthSummary = await getExpensesSummary(monthStart, monthEnd);
+    reportData.monthlySummary = generateMonthlySummary(users, settings?.monthlyBudget || 50000, fullMonthSummary);
   }
 
   return reportData;
@@ -597,10 +597,8 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
     });
   } catch (error) {
     console.error('Calendar sync error:', error);
-    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
     res.status(500).json({
       error: 'Internal server error',
-      details: errorMsg,
     });
   }
 }
@@ -660,7 +658,8 @@ export async function handleMonthlySubscriptions(req: Request, res: Response): P
           subscription.intervalUnit,
           subscription.intervalValue,
           monthStart,
-          monthEnd
+          monthEnd,
+          subscription.lastDayOfMonth
         );
 
         if (deliveryDates.length === 0) {
@@ -731,10 +730,8 @@ export async function handleMonthlySubscriptions(req: Request, res: Response): P
     });
   } catch (error) {
     console.error('Monthly subscription registration error:', error);
-    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
     res.status(500).json({
       error: 'Internal server error',
-      details: errorMsg,
     });
   }
 }
@@ -753,7 +750,8 @@ function calculateDeliveryDatesForMonth(
   intervalUnit: 'week' | 'month',
   intervalValue: number,
   monthStart: Date,
-  monthEnd: Date
+  monthEnd: Date,
+  lastDayOfMonth: boolean = false
 ): Date[] {
   const deliveryDates: Date[] = [];
 
@@ -792,9 +790,9 @@ function calculateDeliveryDatesForMonth(
 
     // 開始日から対象月の範囲内の日付を計算
     while (true) {
-      // 該当月の日付を生成（日付が存在しない場合は月末に調整、UTC基準）
+      // 該当月の日付を生成（lastDayOfMonthが真なら月末日、それ以外は開始日を上限に調整）
       const daysInMonth = new Date(Date.UTC(currentYear, currentMonth + 1, 0)).getUTCDate();
-      const day = Math.min(startDay, daysInMonth);
+      const day = lastDayOfMonth ? daysInMonth : Math.min(startDay, daysInMonth);
       const current = new Date(Date.UTC(currentYear, currentMonth, day));
 
       // 対象月を過ぎたら終了
@@ -901,10 +899,8 @@ ${year}年${month}月分の家賃を登録しました
     });
   } catch (error) {
     console.error('Monthly rent registration error:', error);
-    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
     res.status(500).json({
       error: 'Internal server error',
-      details: errorMsg,
     });
   }
 }

@@ -242,12 +242,15 @@ async function handleTextMessage(
   // 有効なコマンドのプレフィックス一覧（ホワイトリスト）
   const validCommandPrefixes = [
     'ヘルプ',
+    '省略',
     '残高',
     '予算',
     '履歴',
     'レポート',
+    '集計',
     '削除',
     '追加',
+    '旅行',
     '予定',
     '初期設定',
     '設定変更',
@@ -704,6 +707,7 @@ async function handleAddCommand(
 
     const resolved = await resolvePayerName(parts[0], groupId, userId, accessToken, mentions);
     let payerName = resolved.payerName;
+    const payerUserId = resolved.payerUserId || userId;
     const category = parts[1];
     const amountStr = parts[2].replace(/[,，]/g, '');
     const amount = parseInt(amountStr, 10);
@@ -756,9 +760,9 @@ async function handleAddCommand(
       dateStr
     );
 
-    // Firestoreに保存（支払い者名を使用）
+    // Firestoreに保存（支払い者のuserIdを使用）
     await saveExpense({
-      userId,
+      userId: payerUserId,
       userName: payerName,
       amount,
       category: category,
@@ -767,13 +771,15 @@ async function handleAddCommand(
       calendarEventId,
     });
 
-    // 外食費用の場合は残高を更新（現在の月の支出のみ）
+    // 外食費用の場合は支払い者の残高を更新（現在の月の支出のみ）
     let newBalance: number | undefined;
     if (category === '外食費用') {
       if (isCurrentMonthJST(dateStr)) {
-        // 現在の月の支出のみ残高を更新
-        newBalance = user.diningBalance - amount;
-        await updateDiningBalance(userId, newBalance);
+        const payer = await getUser(payerUserId);
+        if (payer) {
+          newBalance = payer.diningBalance - amount;
+          await updateDiningBalance(payerUserId, newBalance);
+        }
       }
       // 過去の月の支出は残高に影響を与えない（集計には含まれる）
     }
@@ -826,6 +832,7 @@ async function handleTravelCommand(
 
     const resolved = await resolvePayerName(parts[0], groupId, userId, accessToken, mentions);
     let payerName = resolved.payerName;
+    const payerUserId = resolved.payerUserId || userId;
     const amountStr = parts[1].replace(/[,，]/g, '');
     const amount = parseInt(amountStr, 10);
     const storeName = parts[2]; // 店舗名
@@ -872,9 +879,9 @@ async function handleTravelCommand(
       dateStr
     );
 
-    // Firestoreに保存（支払い者名を使用）
+    // Firestoreに保存（支払い者のuserIdを使用）
     await saveExpense({
-      userId,
+      userId: payerUserId,
       userName: payerName,
       amount,
       category: '旅行費用',

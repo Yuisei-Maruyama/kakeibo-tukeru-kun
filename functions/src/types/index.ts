@@ -153,6 +153,7 @@ export interface Subscription {
   startDate: Timestamp;          // 開始日（初回の支払日）
   intervalUnit: IntervalUnit;    // 間隔の単位（week: 週, month: 月）
   intervalValue: number;         // 間隔の数値（例: 2週間ごとなら2, 3ヶ月ごとなら3）
+  lastDayOfMonth?: boolean;      // 月末日に登録する場合true（月単位のみ有効）
   isActive: boolean;             // 有効状態
   createdAt: Timestamp;          // 作成日時
   updatedAt: Timestamp;          // 更新日時
