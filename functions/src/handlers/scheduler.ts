@@ -1,9 +1,9 @@
 import { Request, Response } from '@google-cloud/functions-framework';
 import { Timestamp } from '@google-cloud/firestore';
-import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, getExpenseByCalendarEventId, getUserIdByDisplayName, saveExpense, updateDiningBalance, getUser, getAllActiveSubscriptions, getRent, updateExpense, findExpenseWithoutCalendarEventId, getExpensesByDateRange, deleteExpenseById } from '../services/firestore.js';
+import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, getExpenseByCalendarEventId, getUserIdByDisplayName, saveExpense, adjustDiningBalance, getAllActiveSubscriptions, getRent, updateExpense, findExpenseWithoutCalendarEventId, getExpensesByDateRange, deleteExpenseById, findExpenseByDetails } from '../services/firestore.js';
 import { pushMessage, createReportMessage } from '../services/line.js';
-import { getTodaySchedules, getMonthlyExpenseEvents, createCalendarEvent } from '../services/calendar.js';
-import { ReportData, ReportType, UserExpenses, MonthlySummary, Category } from '../types/index.js';
+import { getTodaySchedules, getMonthlyExpenseEventsForSync, createCalendarEvent, getCalendarEvent, parseExpenseEventTitle, ParsedExpenseEvent } from '../services/calendar.js';
+import { ReportData, ReportType, UserExpenses, MonthlySummary, Category, Expense } from '../types/index.js';
 import { formatDateYYYYMMDD, getJSTYear, getJSTMonth, getJSTDate, getJSTInfo, getStoredExpenseMonthRange, isCurrentMonthJST } from '../utils/date.js';
 
 /**
@@ -492,6 +492,56 @@ export async function handleCalendarSync(req: Request, res: Response): Promise<v
   }
 }
 
+function getStoredExpenseDateString(expense: Expense): string {
+  return formatDateYYYYMMDD(expense.date.toDate());
+}
+
+async function syncExistingExpense(
+  existingExpense: Expense,
+  event: ParsedExpenseEvent
+): Promise<'updated' | 'skipped' | 'error'> {
+  const existingDate = getStoredExpenseDateString(existingExpense);
+  const hasChanges =
+    existingExpense.amount !== event.amount ||
+    existingExpense.userName !== event.userName ||
+    existingExpense.category !== event.category ||
+    existingExpense.storeName !== event.storeName ||
+    existingDate !== event.date;
+
+  if (!hasChanges) {
+    console.log(`Event unchanged: ${event.eventId}`);
+    return 'skipped';
+  }
+
+  const userId = await getUserIdByDisplayName(event.userName);
+  if (!userId) {
+    console.warn(`User not found for update: ${event.userName}`);
+    return 'error';
+  }
+
+  if (existingExpense.category === '外食費用' && isCurrentMonthJST(existingDate)) {
+    const restoredBalance = await adjustDiningBalance(existingExpense.userId, existingExpense.amount);
+    console.log(`Restored dining balance for ${existingExpense.userName}: +${existingExpense.amount} -> ${restoredBalance}`);
+  }
+
+  if (event.category === '外食費用' && isCurrentMonthJST(event.date)) {
+    const newBalance = await adjustDiningBalance(userId, -event.amount);
+    console.log(`Updated dining balance for ${event.userName}: -${event.amount} -> ${newBalance}`);
+  }
+
+  await updateExpense(existingExpense.id!, {
+    userId,
+    userName: event.userName,
+    amount: event.amount,
+    category: event.category,
+    storeName: event.storeName,
+    date: Timestamp.fromDate(new Date(event.date)),
+  });
+
+  console.log(`Updated event: ${event.eventId} - ${event.userName} ¥${event.amount}`);
+  return 'updated';
+}
+
 async function syncCalendarExpensesForMonth(
   calendarId: string,
   year: number,
@@ -499,7 +549,7 @@ async function syncCalendarExpensesForMonth(
 ): Promise<CalendarSyncPeriodResult> {
   console.log(`Starting calendar sync period: ${year}/${month}`);
 
-  const expenseEvents = await getMonthlyExpenseEvents(calendarId, year, month);
+  const { expenseEvents, calendarEventIds } = await getMonthlyExpenseEventsForSync(calendarId, year, month);
 
   let syncedCount = 0;
   let updatedCount = 0;
@@ -512,54 +562,13 @@ async function syncCalendarExpensesForMonth(
       const existingExpense = await getExpenseByCalendarEventId(event.eventId);
 
       if (existingExpense) {
-        const hasChanges =
-          existingExpense.amount !== event.amount ||
-          existingExpense.userName !== event.userName ||
-          existingExpense.category !== event.category ||
-          existingExpense.storeName !== event.storeName;
-
-        if (hasChanges) {
-          const userId = await getUserIdByDisplayName(event.userName);
-          if (!userId) {
-            console.warn(`User not found for update: ${event.userName}`);
-            errorCount++;
-            continue;
-          }
-
-          if ((existingExpense.category === '外食費用' || event.category === '外食費用') && isCurrentMonthJST(event.date)) {
-            const oldUserId = existingExpense.userId;
-            const oldUser = await getUser(oldUserId);
-
-            if (existingExpense.category === '外食費用' && oldUser) {
-              const restoredBalance = oldUser.diningBalance + existingExpense.amount;
-              await updateDiningBalance(oldUserId, restoredBalance);
-              console.log(`Restored dining balance for ${existingExpense.userName}: +${existingExpense.amount}`);
-            }
-
-            if (event.category === '外食費用') {
-              const newUser = await getUser(userId);
-              if (newUser) {
-                const newBalance = newUser.diningBalance - event.amount;
-                await updateDiningBalance(userId, newBalance);
-                console.log(`Updated dining balance for ${event.userName}: -${event.amount}`);
-              }
-            }
-          }
-
-          await updateExpense(existingExpense.id!, {
-            userId,
-            userName: event.userName,
-            amount: event.amount,
-            category: event.category,
-            storeName: event.storeName,
-            date: Timestamp.fromDate(new Date(event.date)),
-          });
-
-          console.log(`Updated event: ${event.eventId} - ${event.userName} ¥${event.amount}`);
+        const result = await syncExistingExpense(existingExpense, event);
+        if (result === 'updated') {
           updatedCount++;
-        } else {
-          console.log(`Event unchanged: ${event.eventId}`);
+        } else if (result === 'skipped') {
           skippedCount++;
+        } else {
+          errorCount++;
         }
         continue;
       }
@@ -598,12 +607,8 @@ async function syncCalendarExpensesForMonth(
       });
 
       if (event.category === '外食費用' && isCurrentMonthJST(event.date)) {
-        const user = await getUser(userId);
-        if (user) {
-          const newBalance = user.diningBalance - event.amount;
-          await updateDiningBalance(userId, newBalance);
-          console.log(`Updated dining balance for ${event.userName}: ${newBalance}`);
-        }
+        const newBalance = await adjustDiningBalance(userId, -event.amount);
+        console.log(`Updated dining balance for ${event.userName}: ${newBalance}`);
       }
 
       console.log(`Synced event: ${event.eventId} - ${event.userName} ¥${event.amount}`);
@@ -616,24 +621,38 @@ async function syncCalendarExpensesForMonth(
 
   console.log(`Checking for deleted calendar events in ${year}/${month}...`);
 
-  const calendarEventIds = new Set(expenseEvents.map(e => e.eventId));
   const { start: startDate, end: endDate } = getStoredExpenseMonthRange(year, month);
   const firestoreExpenses = await getExpensesByDateRange(startDate, endDate);
 
   for (const expense of firestoreExpenses) {
     if (expense.calendarEventId && !calendarEventIds.has(expense.calendarEventId)) {
       try {
+        const remoteEvent = await getCalendarEvent(calendarId, expense.calendarEventId);
+        if (remoteEvent) {
+          const parsedEvent = parseExpenseEventTitle(remoteEvent);
+          if (parsedEvent) {
+            console.log(`Calendar event moved or missed in monthly list, updating expense: ${expense.calendarEventId}`);
+            const result = await syncExistingExpense(expense, parsedEvent);
+            if (result === 'updated') {
+              updatedCount++;
+            } else if (result === 'skipped') {
+              skippedCount++;
+            } else {
+              errorCount++;
+            }
+          } else {
+            console.warn(`Calendar event still exists but is not parseable, skipping deletion: ${expense.calendarEventId}`);
+            skippedCount++;
+          }
+          continue;
+        }
+
         console.log(`Deleting expense (calendar event removed): ${expense.calendarEventId} - ${expense.userName} ¥${expense.amount}`);
 
-        const expenseDate = expense.date.toDate();
-        const expenseDateStr = formatDateYYYYMMDD(expenseDate);
+        const expenseDateStr = getStoredExpenseDateString(expense);
         if (expense.category === '外食費用' && isCurrentMonthJST(expenseDateStr)) {
-          const user = await getUser(expense.userId);
-          if (user) {
-            const restoredBalance = user.diningBalance + expense.amount;
-            await updateDiningBalance(expense.userId, restoredBalance);
-            console.log(`Restored dining balance for ${expense.userName}: +${expense.amount}`);
-          }
+          const restoredBalance = await adjustDiningBalance(expense.userId, expense.amount);
+          console.log(`Restored dining balance for ${expense.userName}: +${expense.amount} -> ${restoredBalance}`);
         }
 
         await deleteExpenseById(expense.id!);
@@ -701,6 +720,7 @@ export async function handleMonthlySubscriptions(req: Request, res: Response): P
 
     let registeredCount = 0;
     let errorCount = 0;
+    let skippedCount = 0;
     const registeredItems: string[] = [];
 
     // 各サブスクの該当日を計算して登録
@@ -723,8 +743,22 @@ export async function handleMonthlySubscriptions(req: Request, res: Response): P
 
         // 各日付に対して登録
         for (const deliveryDate of deliveryDates) {
-          const day = deliveryDate.getDate();
+          const day = deliveryDate.getUTCDate();
           const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+          const existingExpense = await findExpenseByDetails(
+            subscription.payerUserId,
+            deliveryDate,
+            subscription.amount,
+            '買い物費用',
+            subscription.serviceName
+          );
+
+          if (existingExpense) {
+            console.log(`Subscription already registered, skipping: ${subscription.serviceName} - ${subscription.payerName} ¥${subscription.amount} on ${dateStr}`);
+            skippedCount++;
+            continue;
+          }
 
           // カレンダーに登録（カテゴリーは「買い物費用」固定）
           const calendarEventId = await createCalendarEvent(
@@ -774,11 +808,12 @@ export async function handleMonthlySubscriptions(req: Request, res: Response): P
       await pushMessage(settings.lineGroupId, message, accessToken);
     }
 
-    console.log(`Monthly subscription registration completed: ${registeredCount} registered, ${errorCount} errors`);
+    console.log(`Monthly subscription registration completed: ${registeredCount} registered, ${skippedCount} skipped, ${errorCount} errors`);
 
     res.status(200).json({
       status: 'ok',
       registered: registeredCount,
+      skipped: skippedCount,
       errors: errorCount,
       total: subscriptions.length,
     });

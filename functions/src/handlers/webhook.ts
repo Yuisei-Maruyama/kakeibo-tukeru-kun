@@ -6,7 +6,7 @@ import { Category, ConversationSession, ReportType } from '../types/index.js';
 
 // Services
 import { analyzeReceiptImage } from '../services/gemini.js';
-import { getOrCreateUser, saveExpense, updateDiningBalance, getUser, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession, getUserByDisplayNamePartial, recalculateAllDiningBalances } from '../services/firestore.js';
+import { getOrCreateUser, saveExpense, adjustDiningBalance, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession, getUserByDisplayNamePartial, recalculateAllDiningBalances } from '../services/firestore.js';
 import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent, getScheduleColorForUser } from '../services/calendar.js';
 import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, createQuickHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
 import { startAddExpenseConversation, startAddExpenseConversationWithPartialData, startAddScheduleConversation, startDeleteExpenseConversation, startDeleteExpenseConversationWithPartialData, startDeleteExpenseConversationAtDateStep, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation, startAddTravelConversationWithPartialData } from './conversation.js';
@@ -122,6 +122,12 @@ async function handleImageMessage(
   calendarId: string
 ): Promise<void> {
   try {
+    const session = await getConversationSession(userId);
+    if (session?.type === 'add_travel' && session.step === 'travel_wait_image') {
+      await handleTravelImageMessage(message, replyToken, userId, groupId, accessToken, geminiApiKey, calendarId);
+      return;
+    }
+
     // 画像を取得
     const imageBuffer = await getImageContent(message.id, accessToken);
 
@@ -169,8 +175,7 @@ async function handleImageMessage(
     if (analysisResult.category === '外食費用') {
       if (isCurrentMonthJST(analysisResult.date)) {
         // 現在の月の支出のみ残高を更新
-        newBalance = user.diningBalance - analysisResult.amount;
-        await updateDiningBalance(userId, newBalance);
+        newBalance = await adjustDiningBalance(userId, -analysisResult.amount) ?? undefined;
       }
       // 過去の月の支出は残高に影響を与えない（集計には含まれる）
     }
@@ -192,6 +197,67 @@ async function handleImageMessage(
     await replyMessage(
       replyToken,
       createErrorMessage(`画像処理エラー: ${errorMsg}`),
+      accessToken
+    );
+  }
+}
+
+async function handleTravelImageMessage(
+  message: ImageEventMessage,
+  replyToken: string,
+  userId: string,
+  groupId: string,
+  accessToken: string,
+  geminiApiKey: string,
+  calendarId: string
+): Promise<void> {
+  try {
+    const imageBuffer = await getImageContent(message.id, accessToken);
+    const analysisResult = await analyzeReceiptImage(imageBuffer, geminiApiKey);
+
+    if (analysisResult.error) {
+      await replyMessage(replyToken, createErrorMessage(analysisResult.reason), accessToken);
+      return;
+    }
+
+    const userName = await getUserDisplayName(groupId, userId, accessToken);
+    const user = await getOrCreateUser(userId, userName, groupId);
+    const calendarEventId = await createCalendarEvent(
+      calendarId,
+      user.displayName,
+      analysisResult.amount,
+      '旅行費用',
+      analysisResult.storeName,
+      analysisResult.date,
+      analysisResult.items
+    );
+
+    await saveExpense({
+      userId,
+      userName: user.displayName,
+      amount: analysisResult.amount,
+      category: '旅行費用',
+      storeName: analysisResult.storeName,
+      date: Timestamp.fromDate(new Date(analysisResult.date)),
+      calendarEventId,
+    });
+
+    const responseMessage = createRegistrationMessage(
+      '旅行費用',
+      analysisResult.amount,
+      user.displayName,
+      analysisResult.storeName,
+      analysisResult.date
+    );
+
+    await replyMessage(replyToken, responseMessage, accessToken);
+    await deleteConversationSession(userId);
+  } catch (error) {
+    console.error('Travel image message handling error:', error);
+    const errorMsg = error instanceof Error ? error.message : '不明なエラー';
+    await replyMessage(
+      replyToken,
+      createErrorMessage(`旅行費用の画像処理エラー: ${errorMsg}`),
       accessToken
     );
   }
@@ -653,14 +719,11 @@ async function handleDeleteCommand(
     const expenseDateStr = targetDate.toISOString().split('T')[0];
     let newBalance: number | undefined;
     if (deletedExpense.category === '外食費用') {
-      const payer = await getUser(targetUser.id);
-      if (payer && isCurrentMonthJST(expenseDateStr)) {
-        newBalance = payer.diningBalance + deletedExpense.amount;
-        await updateDiningBalance(targetUser.id, newBalance);
+      if (isCurrentMonthJST(expenseDateStr)) {
+        newBalance = await adjustDiningBalance(targetUser.id, deletedExpense.amount) ?? undefined;
       }
     }
 
-    const user = await getUser(userId);
     const message = createDeleteMessage(
       expenseDateStr,
       deletedExpense.category,
@@ -775,11 +838,7 @@ async function handleAddCommand(
     let newBalance: number | undefined;
     if (category === '外食費用') {
       if (isCurrentMonthJST(dateStr)) {
-        const payer = await getUser(payerUserId);
-        if (payer) {
-          newBalance = payer.diningBalance - amount;
-          await updateDiningBalance(payerUserId, newBalance);
-        }
+        newBalance = await adjustDiningBalance(payerUserId, -amount) ?? undefined;
       }
       // 過去の月の支出は残高に影響を与えない（集計には含まれる）
     }

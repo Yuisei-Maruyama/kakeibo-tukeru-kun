@@ -128,6 +128,31 @@ export async function updateDiningBalance(userId: string, newBalance: number): P
 }
 
 /**
+ * ユーザーの外食残高を差分更新
+ */
+export async function adjustDiningBalance(userId: string, delta: number): Promise<number | null> {
+  const db = getFirestore();
+  const userRef = db.collection('users').doc(userId);
+
+  return db.runTransaction(async transaction => {
+    const userDoc = await transaction.get(userRef);
+    if (!userDoc.exists) {
+      return null;
+    }
+
+    const user = userDoc.data() as User;
+    const newBalance = user.diningBalance + delta;
+
+    transaction.update(userRef, {
+      diningBalance: newBalance,
+      updatedAt: Timestamp.now(),
+    });
+
+    return newBalance;
+  });
+}
+
+/**
  * 全ユーザーの外食残高をリセット
  */
 export async function resetAllDiningBalances(monthlyBudget: number): Promise<void> {
@@ -396,6 +421,42 @@ export async function deleteExpenseByDateAndAmount(
 
   console.log(`Deleted expense: ${expense.id} (${userId}, ${date.toISOString()}, ${amount}, ${category})`);
   return expense;
+}
+
+/**
+ * 指定条件に一致する支出を取得
+ */
+export async function findExpenseByDetails(
+  userId: string,
+  date: Date,
+  amount: number,
+  category: Category,
+  storeName?: string
+): Promise<Expense | null> {
+  const db = getFirestore();
+  const startOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
+  const endOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
+
+  const snapshot = await db
+    .collection('expenses')
+    .where('userId', '==', userId)
+    .where('category', '==', category)
+    .get();
+
+  const matchingDoc = snapshot.docs.find(doc => {
+    const expense = doc.data() as Expense;
+    const expenseDate = expense.date.toDate();
+    return expenseDate >= startOfDay &&
+           expenseDate <= endOfDay &&
+           expense.amount === amount &&
+           (storeName === undefined || expense.storeName === storeName);
+  });
+
+  if (!matchingDoc) {
+    return null;
+  }
+
+  return { id: matchingDoc.id, ...matchingDoc.data() } as Expense;
 }
 
 // =============================================================================
@@ -788,5 +849,6 @@ export async function findExpenseWithoutCalendarEventId(
     return null;
   }
 
-  return matchingDocs[0].data() as Expense;
+  const matchingDoc = matchingDocs[0];
+  return { id: matchingDoc.id, ...matchingDoc.data() } as Expense;
 }
