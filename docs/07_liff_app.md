@@ -72,10 +72,13 @@ NEXT_PUBLIC_LIFF_ID=2000000000-xxxxxxxx
 LINE_CHANNEL_ID=2000000000
 GOOGLE_CALENDAR_ID=your-calendar-id@group.calendar.google.com
 GEMINI_API_KEY=your-gemini-api-key
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+GOOGLE_CLIENT_EMAIL=your-service-account@your-gcp-project-id.iam.gserviceaccount.com
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 LIFF_DASHBOARD_AUTH_DISABLED=false
 ```
 
-Firestore / Google Calendar 取得には、Next.js 実行環境から Google Application Default Credentials またはサービスアカウント認証を利用できる必要がある。
+Firestore / Google Calendar 取得には、Next.js 実行環境から Google Application Default Credentials またはサービスアカウント認証を利用できる必要がある。Vercel では `GOOGLE_CLOUD_PROJECT`、`GOOGLE_CLIENT_EMAIL`、`GOOGLE_PRIVATE_KEY` を設定する。
 
 ## 環境変数の取得方法
 
@@ -85,6 +88,9 @@ Firestore / Google Calendar 取得には、Next.js 実行環境から Google App
 | `LINE_CHANNEL_ID` | LIFF ID token のサーバー検証 | 同じ LINEログインチャネルの `チャネルID` を使う |
 | `GOOGLE_CALENDAR_ID` | Calendar イベントの取得・登録 | Google Calendar の対象カレンダーの「設定と共有」からカレンダーIDを確認する。既存 `settings.calendarId` に保存済みなら省略可能 |
 | `GEMINI_API_KEY` | 画像解析 | Google AI Studio で Gemini API キーを作成する |
+| `GOOGLE_CLOUD_PROJECT` | Firestore / Calendar API の Google Cloud プロジェクト指定 | Google Cloud Console のプロジェクトIDを使う |
+| `GOOGLE_CLIENT_EMAIL` | Vercel から Google API にアクセスするサービスアカウント | サービスアカウントキー JSON の `client_email` を使う |
+| `GOOGLE_PRIVATE_KEY` | サービスアカウントの秘密鍵 | サービスアカウントキー JSON の `private_key` を使う。Vercel では改行を含む値のまま、または `\n` エスケープ形式で設定する |
 | `LIFF_DASHBOARD_AUTH_DISABLED` | ローカル確認用の認証スキップ | ローカルでのみ `true` にできる。本番は必ず `false` または未設定 |
 | `GOOGLE_APPLICATION_CREDENTIALS` | ローカルで Firestore / Calendar にアクセスするための ADC | サービスアカウントキー JSON を使う場合に、そのファイルパスを指定する。Google Cloud 上では接続済みサービスアカウントを推奨 |
 
@@ -108,7 +114,11 @@ Firestore / Google Calendar 取得には、Next.js 実行環境から Google App
 3. Google Calendar の対象カレンダーを、サービスアカウントのメールアドレスに共有する。
    - 画像追加・予定登録まで行うため、予定の変更権限が必要
    - 表示だけなら閲覧権限でもよい
-4. ローカル開発では、次のどちらかで ADC を用意する。
+4. Vercel 用にサービスアカウントキー JSON を作成し、JSON から以下を環境変数に設定する。
+   - `project_id` → `GOOGLE_CLOUD_PROJECT`
+   - `client_email` → `GOOGLE_CLIENT_EMAIL`
+   - `private_key` → `GOOGLE_PRIVATE_KEY`
+5. ローカル開発では、次のどちらかで ADC を用意する。
 
 ```bash
 # 推奨: 自分の Google アカウントで ADC を作成
@@ -132,6 +142,9 @@ NEXT_PUBLIC_LIFF_ID=1234567890-AbcdEfgh
 LINE_CHANNEL_ID=1234567890
 GOOGLE_CALENDAR_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx@group.calendar.google.com
 GEMINI_API_KEY=AIza...
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+GOOGLE_CLIENT_EMAIL=your-service-account@your-gcp-project-id.iam.gserviceaccount.com
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 LIFF_DASHBOARD_AUTH_DISABLED=false
 ```
 
@@ -145,7 +158,7 @@ LIFF_DASHBOARD_AUTH_DISABLED=true
 
 ## デプロイ先での設定
 
-デプロイ先の環境変数管理画面または CLI で、`.env.local` と同じ値を設定する。`NEXT_PUBLIC_LIFF_ID` はクライアントに公開される値で、その他の `LINE_CHANNEL_ID`、`GOOGLE_CALENDAR_ID`、`GEMINI_API_KEY`、Google 認証情報はサーバー側だけで扱う。
+デプロイ先の環境変数管理画面または CLI で、`.env.local` と同じ値を設定する。`NEXT_PUBLIC_LIFF_ID` はクライアントに公開される値で、その他の `LINE_CHANNEL_ID`、`GOOGLE_CALENDAR_ID`、`GEMINI_API_KEY`、`GOOGLE_CLOUD_PROJECT`、`GOOGLE_CLIENT_EMAIL`、`GOOGLE_PRIVATE_KEY` はサーバー側だけで扱う。
 
 サービスアカウントキー JSON を環境変数として置く運用は避け、Cloud Run / App Hosting / Vercel などの実行環境で Workload Identity または安全な Secret 管理を使う。
 

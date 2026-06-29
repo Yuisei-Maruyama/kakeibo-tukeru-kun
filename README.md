@@ -141,6 +141,9 @@ make setup
 | `LINE_CHANNEL_ACCESS_TOKEN` | LINE チャネルアクセストークン |
 | `GOOGLE_CALENDAR_ID` | Google カレンダー ID |
 | `GEMINI_API_KEY` | Gemini API キー |
+| `GOOGLE_CLOUD_PROJECT` | LIFF/Vercel 用 Google Cloud プロジェクト ID |
+| `GOOGLE_CLIENT_EMAIL` | LIFF/Vercel 用サービスアカウントメール |
+| `GOOGLE_PRIVATE_KEY` | LIFF/Vercel 用サービスアカウント秘密鍵 |
 
 ### 4. Build & Deploy
 

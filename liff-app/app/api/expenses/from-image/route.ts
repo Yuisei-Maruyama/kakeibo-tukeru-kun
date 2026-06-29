@@ -2,6 +2,7 @@ import { Firestore, Timestamp } from "@google-cloud/firestore";
 import { GoogleGenAI } from "@google/genai";
 import { google, type calendar_v3 } from "googleapis";
 import { NextRequest, NextResponse } from "next/server";
+import { createFirestoreClient, createGoogleAuth } from "@/lib/google-server";
 import type { DashboardExpenseCategory } from "@/types/dashboard";
 
 export const runtime = "nodejs";
@@ -30,7 +31,7 @@ let genAIClient: GoogleGenAI | null = null;
 
 function getFirestore() {
   if (!firestore) {
-    firestore = new Firestore();
+    firestore = createFirestoreClient();
   }
 
   return firestore;
@@ -38,9 +39,7 @@ function getFirestore() {
 
 function getCalendarClient() {
   if (!calendarClient) {
-    const auth = new google.auth.GoogleAuth({
-      scopes: ["https://www.googleapis.com/auth/calendar"],
-    });
+    const auth = createGoogleAuth(["https://www.googleapis.com/auth/calendar"]);
     calendarClient = google.calendar({ version: "v3", auth });
   }
 

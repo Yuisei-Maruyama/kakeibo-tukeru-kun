@@ -7,6 +7,8 @@ import {
   Camera,
   ChartNoAxesCombined,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   CircleHelp,
   ClipboardList,
   Clock3,
@@ -144,6 +146,21 @@ function runAfterInitialPaint(callback: () => void) {
 
   const handle = window.setTimeout(callback, 120);
   return () => window.clearTimeout(handle);
+}
+
+function formatYearMonthLabel(value: string) {
+  const [year, month] = value.split("-").map(Number);
+  if (!year || !month) {
+    return "表示月";
+  }
+
+  return `${year}年${month}月`;
+}
+
+function shiftYearMonth(value: string, offset: number) {
+  const [year, month] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1 + offset, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 export function KakeiboLiffApp() {
@@ -300,6 +317,20 @@ export function KakeiboLiffApp() {
     } finally {
       setIsSending(false);
     }
+  }
+
+  function selectReceiptFile(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    if (receiptImageUrl) {
+      URL.revokeObjectURL(receiptImageUrl);
+    }
+
+    setReceiptFile(file);
+    setReceiptImageUrl(URL.createObjectURL(file));
+    setToast(`${file.name} を選択しました`);
   }
 
   async function submitReceiptImage() {
@@ -538,14 +569,41 @@ export function KakeiboLiffApp() {
                 </CardHeader>
                 <CardContent className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
                   <div className="grid gap-3">
-                    <Field label="表示月" htmlFor="dashboard-month">
-                      <Input
-                        id="dashboard-month"
-                        type="month"
-                        value={dashboardMonth}
-                        onChange={(event) => setDashboardMonth(event.target.value)}
-                      />
-                    </Field>
+                    <div className="grid min-w-0 gap-2">
+                      <Label htmlFor="dashboard-month-label">表示月</Label>
+                      <div className="grid grid-cols-[3rem_1fr_3rem] gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          aria-label="前月"
+                          onClick={() =>
+                            setDashboardMonth((current) => shiftYearMonth(current, -1))
+                          }
+                        >
+                          <ChevronLeft aria-hidden="true" />
+                        </Button>
+                        <div
+                          id="dashboard-month-label"
+                          className="text-glow flex h-12 min-w-0 items-center justify-center rounded-md border border-input bg-card px-3 text-base font-bold shadow-[inset_0_0_18px_rgba(45,212,191,0.05)]"
+                        >
+                          <span className="truncate">
+                            {formatYearMonthLabel(dashboardMonth)}
+                          </span>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          aria-label="翌月"
+                          onClick={() =>
+                            setDashboardMonth((current) => shiftYearMonth(current, 1))
+                          }
+                        >
+                          <ChevronRight aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </div>
                     <div className="rounded-md border bg-background/70 p-4">
                       <p className="text-sm font-semibold text-muted-foreground">
                         月間支出
@@ -576,39 +634,59 @@ export function KakeiboLiffApp() {
                   <CardDescription>レシート・支払い画面</CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-4">
-                  <label className="flex min-h-56 cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-primary/50 bg-ledger-mint/45 p-4 text-center transition-colors hover:bg-ledger-mint">
+                  <div className="flex min-h-52 min-w-0 flex-col items-center justify-center gap-3 overflow-hidden rounded-lg border border-dashed border-primary/50 bg-ledger-mint/45 p-4 text-center">
                     {receiptImageUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={receiptImageUrl}
                         alt="選択したレシート"
-                        className="max-h-64 w-full rounded-md object-contain"
+                        className="max-h-56 max-w-full rounded-md object-contain"
                       />
                     ) : (
                       <>
                         <ImagePlus className="size-10 text-primary" aria-hidden="true" />
-                        <span className="font-semibold">写真を選択</span>
+                        <span className="font-semibold">写真を追加</span>
                       </>
                     )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button variant="outline" asChild>
+                      <label htmlFor="receipt-camera">
+                        <Camera aria-hidden="true" />
+                        撮影
+                      </label>
+                    </Button>
                     <Input
+                      id="receipt-camera"
                       className="sr-only"
                       type="file"
                       accept="image/*"
                       capture="environment"
                       onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (!file) {
-                          return;
-                        }
-                        if (receiptImageUrl) {
-                          URL.revokeObjectURL(receiptImageUrl);
-                        }
-                        setReceiptFile(file);
-                        setReceiptImageUrl(URL.createObjectURL(file));
-                        setToast(`${file.name} を選択しました`);
+                        selectReceiptFile(event.target.files?.[0]);
+                        event.currentTarget.value = "";
                       }}
                     />
-                  </label>
+
+                    <Button variant="outline" asChild>
+                      <label htmlFor="receipt-library">
+                        <ImagePlus aria-hidden="true" />
+                        写真から選択
+                      </label>
+                    </Button>
+                    <Input
+                      id="receipt-library"
+                      className="sr-only"
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => {
+                        selectReceiptFile(event.target.files?.[0]);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </div>
+
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Button
                       type="button"
@@ -1132,7 +1210,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid gap-2">
+    <div className="grid min-w-0 gap-2">
       <Label htmlFor={htmlFor}>{label}</Label>
       {children}
     </div>
@@ -1153,7 +1231,7 @@ function CategorySelect({
       id={id}
       value={value}
       onChange={(event) => onChange(event.target.value as ExpenseCategory)}
-      className="h-12 w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+      className="h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
     >
       {categories.map((category) => (
         <option key={category} value={category}>

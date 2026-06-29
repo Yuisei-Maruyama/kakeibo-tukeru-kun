@@ -63,6 +63,7 @@
 
 html {
   min-width: 320px;
+  overflow-x: hidden;
   scroll-padding-bottom: calc(7rem + env(safe-area-inset-bottom));
 }
 
@@ -72,6 +73,7 @@ body {
   font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
   letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
   overscroll-behavior-y: none;
   text-rendering: optimizeLegibility;
 }
