@@ -117,7 +117,7 @@ const commandTiles = [
   { label: "残高", command: "@残高", icon: WalletCards },
   { label: "集計", command: "@集計", icon: ChartNoAxesCombined },
   { label: "履歴", command: "@履歴", icon: ClipboardList },
-  { label: "サブスク一覧", command: "@サブスク一覧", icon: RefreshCw },
+  { label: "サブスク", command: "@サブスク一覧", icon: RefreshCw },
   { label: "初期設定", command: "@初期設定", icon: UserRound },
   { label: "設定変更", command: "@設定変更", icon: Settings },
   { label: "キャンセル", command: "@キャンセル", icon: XCircle },
@@ -373,33 +373,28 @@ export function KakeiboLiffApp() {
   return (
     <main className="ledger-grid min-h-dvh bg-background px-3 pb-[calc(6.75rem+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)] text-foreground">
       <div className="mx-auto flex w-full max-w-md flex-col gap-4">
-        <header className="sticky top-0 z-30 -mx-3 border-b bg-background/95 px-3 py-3 backdrop-blur-xl">
-          <div className="mx-auto flex w-full max-w-md items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="grid size-11 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground shadow-ledger">
-                <ReceiptText className="size-6" aria-hidden="true" />
+        <header className="sticky top-0 z-30 -mx-3 border-b bg-background/95 px-3 py-2 backdrop-blur-xl">
+          <div className="mx-auto flex w-full max-w-md items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="grid size-10 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground shadow-ledger">
+                <ReceiptText className="size-5" aria-hidden="true" />
               </div>
               <div className="min-w-0">
-                <h1 className="truncate text-xl font-black leading-tight tracking-normal">
+                <h1 className="truncate text-lg font-black leading-tight tracking-normal">
                   家計ぼっと LIFF
                 </h1>
-                <p className="truncate text-xs font-semibold text-muted-foreground">
+                <p className="truncate text-[0.7rem] font-semibold leading-tight text-muted-foreground">
                   {liffSession.profile?.displayName ?? "LINE 家計簿"}
                 </p>
               </div>
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
-              <Badge
-                variant={dashboard?.source === "live" ? "default" : "outline"}
-                className="hidden min-h-8 sm:inline-flex"
-              >
-                {dashboard?.source === "live" ? "実データ" : "プレビュー"}
-              </Badge>
               <Button
                 type="button"
                 variant="outline"
                 size="icon"
+                className="size-10"
                 aria-label="データを更新"
                 disabled={isLoadingDashboard}
                 onClick={() => void loadDashboard()}
@@ -409,12 +404,12 @@ export function KakeiboLiffApp() {
                 ) : (
                   <RefreshCw aria-hidden="true" />
                 )}
-                更新
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 size="icon"
+                className="size-10"
                 aria-label="LIFFを閉じる"
                 onClick={() => closeLiffWindow()}
               >
@@ -509,25 +504,25 @@ export function KakeiboLiffApp() {
               </section>
 
               <Card>
-                <CardHeader>
+                <CardHeader className="pb-3">
                   <CardTitle>基本操作</CardTitle>
                   <CardDescription>docs の主要コマンド</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid grid-cols-2 gap-2">
                     {commandTiles.map((tile) => (
                       <Button
                         key={tile.command}
                         type="button"
                         variant="outline"
-                        className="h-14 justify-start"
+                        className="h-12 justify-start px-3 text-sm active:scale-[0.98] [&_svg]:size-4"
                         disabled={isSending}
                         onClick={() =>
                           sendCommands([tile.command], `${tile.label} を送信しました`)
                         }
                       >
                         <tile.icon aria-hidden="true" />
-                        <span>{tile.label}</span>
+                        <span className="min-w-0 truncate">{tile.label}</span>
                       </Button>
                     ))}
                   </div>
@@ -555,7 +550,7 @@ export function KakeiboLiffApp() {
                       <p className="text-sm font-semibold text-muted-foreground">
                         月間支出
                       </p>
-                      <p className="mt-1 text-3xl font-black">
+                      <p className="text-glow mt-1 text-3xl font-black">
                         {formatCurrency(totals.total)}
                       </p>
                       <div className="mt-3 grid gap-2 text-sm">
@@ -1120,7 +1115,7 @@ function MetricCard({
         </div>
         <div className="min-w-0">
           <p className="text-sm font-semibold text-muted-foreground">{label}</p>
-          <p className="truncate text-2xl font-black tracking-normal">{value}</p>
+          <p className="text-glow truncate text-2xl font-black tracking-normal">{value}</p>
         </div>
       </CardContent>
     </Card>

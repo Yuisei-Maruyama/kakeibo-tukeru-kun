@@ -19,37 +19,41 @@
   --color-accent-foreground: hsl(var(--accent-foreground));
   --color-card: hsl(var(--card));
   --color-card-foreground: hsl(var(--card-foreground));
-  --color-ledger-ink: #123D35;
-  --color-ledger-green: #0F766E;
-  --color-ledger-mint: #DDF7EC;
-  --color-ledger-paper: #F8FAF6;
-  --color-ledger-coin: #B7791F;
-  --color-ledger-coral: #B42318;
-  --color-ledger-blue: #006CA8;
-  --shadow-ledger: 0 18px 50px rgba(18, 61, 53, 0.10);
+  --color-ledger-ink: #E6F4EF;
+  --color-ledger-green: #2DD4BF;
+  --color-ledger-mint: #123C34;
+  --color-ledger-paper: #071B17;
+  --color-ledger-coin: #F5B84B;
+  --color-ledger-coral: #FF7A6E;
+  --color-ledger-blue: #68C7FF;
+  --shadow-ledger:
+    0 0 0 1px rgba(45, 212, 191, 0.14),
+    0 0 26px rgba(45, 212, 191, 0.16),
+    0 18px 50px rgba(0, 0, 0, 0.36);
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
 }
 
 :root {
-  --background: 116 31% 97%;
-  --foreground: 168 54% 16%;
-  --card: 0 0% 100%;
-  --card-foreground: 168 54% 16%;
-  --primary: 175 77% 26%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 44 78% 90%;
-  --secondary-foreground: 168 54% 16%;
-  --muted: 150 25% 93%;
-  --muted-foreground: 165 14% 34%;
-  --accent: 203 100% 33%;
-  --accent-foreground: 0 0% 100%;
-  --destructive: 4 70% 40%;
+  color-scheme: dark;
+  --background: 165 39% 7%;
+  --foreground: 150 29% 91%;
+  --card: 164 34% 10%;
+  --card-foreground: 150 29% 91%;
+  --primary: 172 75% 50%;
+  --primary-foreground: 165 39% 7%;
+  --secondary: 42 66% 24%;
+  --secondary-foreground: 44 92% 86%;
+  --muted: 164 24% 15%;
+  --muted-foreground: 158 17% 70%;
+  --accent: 203 94% 67%;
+  --accent-foreground: 165 39% 7%;
+  --destructive: 4 82% 64%;
   --destructive-foreground: 0 0% 100%;
-  --border: 156 24% 82%;
-  --input: 156 24% 82%;
-  --ring: 203 100% 33%;
+  --border: 172 49% 31%;
+  --input: 172 49% 31%;
+  --ring: 172 75% 50%;
   --radius: 0.5rem;
 }
 
@@ -70,6 +74,20 @@ body {
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
   text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+.text-glow {
+  text-shadow:
+    0 0 12px rgba(45, 212, 191, 0.20),
+    0 0 28px rgba(45, 212, 191, 0.12);
+}
+
+::selection {
+  background: rgba(45, 212, 191, 0.32);
+  color: hsl(var(--foreground));
 }
 
 button,
@@ -97,9 +115,19 @@ textarea {
 
 .ledger-grid {
   background-image:
-    linear-gradient(rgba(15, 118, 110, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(15, 118, 110, 0.08) 1px, transparent 1px);
+    radial-gradient(circle at 50% 0%, rgba(45, 212, 191, 0.20), transparent 36rem),
+    linear-gradient(rgba(45, 212, 191, 0.13) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 212, 191, 0.13) 1px, transparent 1px);
   background-size: 24px 24px;
+}
+
+@supports (background: color-mix(in oklab, white, black)) {
+  .ledger-grid {
+    background-image:
+      radial-gradient(circle at 50% 0%, color-mix(in oklab, hsl(var(--primary)) 24%, transparent), transparent 36rem),
+      linear-gradient(color-mix(in oklab, hsl(var(--primary)) 14%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in oklab, hsl(var(--primary)) 14%, transparent) 1px, transparent 1px);
+  }
 }
 
 .content-auto {
