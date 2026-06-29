@@ -321,6 +321,7 @@ async function getExpenses(year: number, month: number, groupUserIds: Set<string
         amount: Number(expense.amount ?? 0),
         category: String(expense.category ?? "買い物費用") as DashboardExpenseCategory,
         storeName: String(expense.storeName ?? ""),
+        memo: expense.memo ? String(expense.memo) : undefined,
         date: formatTimestampDate(expense.date),
         calendarEventId: expense.calendarEventId
           ? String(expense.calendarEventId)

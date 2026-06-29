@@ -112,7 +112,8 @@ export async function createCalendarEvent(
   category: Category,
   storeName: string,
   date: string,
-  items?: string[]
+  items?: string[],
+  memo?: string
 ): Promise<string> {
   try {
     const calendar = getCalendarClient();
@@ -122,6 +123,9 @@ export async function createCalendarEvent(
     let description = `店舗: ${storeName}\n`;
     if (items && items.length > 0) {
       description += `商品: ${items.join(', ')}\n`;
+    }
+    if (memo) {
+      description += `メモ: ${memo}\n`;
     }
     description += `登録元: LINE家計簿Bot`;
 

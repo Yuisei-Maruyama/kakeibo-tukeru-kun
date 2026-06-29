@@ -10,6 +10,7 @@ export type Expense = {
   payer: string;
   amount: number;
   storeName: string;
+  memo?: string;
 };
 
 export type ScheduleInput = {
@@ -66,14 +67,33 @@ export function todayInputValue() {
   return `${year}-${month}-${day}`;
 }
 
+function toCommandToken(value: string, fallback: string) {
+  const normalized = value.trim().replace(/\s+/g, "・");
+  return normalized || fallback;
+}
+
 export function buildAddExpenseCommand(expense: Omit<Expense, "id">) {
   const date = toCommandDate(expense.date);
+  const content = toCommandToken(expense.storeName, "手動入力");
+  const memo = expense.memo ? toCommandToken(expense.memo, "") : "";
 
   if (expense.category === "旅行費用") {
-    return `@旅行 ${expense.payer} ${expense.amount} ${expense.storeName || "旅行費用"} ${date}`.trim();
+    return ["@旅行", expense.payer, expense.amount, content, date, memo]
+      .filter(Boolean)
+      .join(" ");
   }
 
-  return `@追加 ${expense.payer} ${expense.category} ${expense.amount} ${date}`.trim();
+  return [
+    "@追加",
+    expense.payer,
+    expense.category,
+    expense.amount,
+    date,
+    content,
+    memo,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 export function buildDeleteExpenseCommand(expense: Omit<Expense, "id">) {

@@ -18,6 +18,7 @@ export type DashboardExpense = {
   amount: number;
   category: DashboardExpenseCategory;
   storeName: string;
+  memo?: string;
   date: string;
   calendarEventId?: string;
 };

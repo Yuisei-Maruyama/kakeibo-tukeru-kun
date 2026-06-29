@@ -94,11 +94,15 @@ export function createRegistrationMessage(
   userName: string,
   storeName: string,
   date: string,
-  balance?: number
+  balance?: number,
+  memo?: string
 ): string {
   let message = `✅ 登録しました！\n`;
   message += `📝 ${category}: ￥${amount.toLocaleString()}（${userName}）\n`;
-  message += `🏪 ${storeName}\n`;
+  message += `🧾 ${storeName}\n`;
+  if (memo) {
+    message += `💬 ${memo}\n`;
+  }
   message += `📅 ${date}\n`;
   message += `\n`;
 
@@ -161,7 +165,7 @@ export function createHelpMessage(): string {
   message += `　　 画像解析 or 手動入力\n\n`;
   message += `一括入力の場合:\n`;
   message += `@追加 名前 外食費用 金額\n`;
-  message += `@追加 名前 外食費用 金額 日付\n\n`;
+  message += `@追加 名前 外食費用 金額 日付 内容 メモ\n\n`;
   message += `💡 ヒント\n`;
   message += `・@自分 → 送信者の名前に置換\n`;
   message += `・名前は部分一致で検索（通知なし）\n`;
@@ -237,8 +241,8 @@ export function createQuickHelpMessage(): string {
   message += `@履歴 / @履歴 2024/12\n\n`;
 
   message += `【登録・削除】\n`;
-  message += `@追加 @自分 外食費用 3000 2026/01/01\n`;
-  message += `@旅行 @自分 15000 新幹線代 2026/01/01\n`;
+  message += `@追加 @自分 外食費用 3000 2026/01/01 ランチ 打ち合わせ後\n`;
+  message += `@旅行 @自分 15000 新幹線代 2026/01/01 出張\n`;
   message += `@削除 @自分 外食費用 1280 2026/01/01\n\n`;
 
   message += `【予定】\n`;
@@ -419,7 +423,7 @@ export function createDeleteMessage(
   let message = `🗑️ 以下の支出を削除しました\n\n`;
   message += `📅 ${formatDate(date)}\n`;
   message += `📝 ${category}: ￥${amount.toLocaleString()}（${userName}）\n`;
-  message += `🏪 ${storeName}\n`;
+  message += `🧾 ${storeName}\n`;
 
   if (category === '外食費用' && newBalance !== undefined) {
     message += `\n💰 ${userName}の外食残高: ￥${newBalance.toLocaleString()}（+￥${amount.toLocaleString()}）`;

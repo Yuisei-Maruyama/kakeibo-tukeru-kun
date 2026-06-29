@@ -111,6 +111,7 @@ const defaultDraft = (): DraftExpense => ({
   payer: "@自分",
   amount: 1280,
   storeName: "手動入力",
+  memo: "",
 });
 
 const commandTiles = [
@@ -173,6 +174,7 @@ export function KakeiboLiffApp() {
   const [isInitializing, setIsInitializing] = React.useState(true);
   const [isSending, setIsSending] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState("home");
+  const [addMode, setAddMode] = React.useState<"image" | "manual">("image");
   const [toast, setToast] = React.useState("フォームで既存 bot コマンドを送信できます");
   const [dashboard, setDashboard] = React.useState<DashboardData | null>(null);
   const [dashboardMonth, setDashboardMonth] = React.useState(
@@ -244,6 +246,7 @@ export function KakeiboLiffApp() {
                 payer: expense.userName,
                 amount: expense.amount,
                 storeName: expense.storeName,
+                memo: expense.memo ?? "",
               })),
           );
         }
@@ -627,105 +630,146 @@ export function KakeiboLiffApp() {
 
           {activeTab === "add" ? (
           <TabsContent value="add">
-            <div className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
-              <Card>
-                <CardHeader>
-                  <CardTitle>画像で追加</CardTitle>
-                  <CardDescription>レシート・支払い画面</CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-4">
-                  <div className="flex min-h-52 min-w-0 flex-col items-center justify-center gap-3 overflow-hidden rounded-lg border border-dashed border-primary/50 bg-ledger-mint/45 p-4 text-center">
-                    {receiptImageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={receiptImageUrl}
-                        alt="選択したレシート"
-                        className="max-h-56 max-w-full rounded-md object-contain"
-                      />
-                    ) : (
-                      <>
-                        <ImagePlus className="size-10 text-primary" aria-hidden="true" />
-                        <span className="font-semibold">写真を追加</span>
-                      </>
-                    )}
-                  </div>
+            <div className="grid gap-4">
+              <div
+                role="tablist"
+                aria-label="追加方法"
+                className="grid grid-cols-2 gap-2 rounded-lg border bg-card/80 p-1 shadow-ledger"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={addMode === "image"}
+                  className={cn(
+                    "flex min-h-12 items-center justify-center gap-2 rounded-md px-3 text-sm font-bold transition-colors",
+                    addMode === "image"
+                      ? "bg-primary text-primary-foreground shadow-ledger"
+                      : "text-muted-foreground",
+                  )}
+                  onClick={() => setAddMode("image")}
+                >
+                  <ImagePlus className="size-4" aria-hidden="true" />
+                  画像
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={addMode === "manual"}
+                  className={cn(
+                    "flex min-h-12 items-center justify-center gap-2 rounded-md px-3 text-sm font-bold transition-colors",
+                    addMode === "manual"
+                      ? "bg-primary text-primary-foreground shadow-ledger"
+                      : "text-muted-foreground",
+                  )}
+                  onClick={() => setAddMode("manual")}
+                >
+                  <Edit3 className="size-4" aria-hidden="true" />
+                  手動
+                </button>
+              </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <Button variant="outline" asChild>
-                      <label htmlFor="receipt-camera">
-                        <Camera aria-hidden="true" />
-                        撮影
-                      </label>
-                    </Button>
-                    <Input
-                      id="receipt-camera"
-                      className="sr-only"
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={(event) => {
-                        selectReceiptFile(event.target.files?.[0]);
-                        event.currentTarget.value = "";
-                      }}
-                    />
-
-                    <Button variant="outline" asChild>
-                      <label htmlFor="receipt-library">
-                        <ImagePlus aria-hidden="true" />
-                        写真から選択
-                      </label>
-                    </Button>
-                    <Input
-                      id="receipt-library"
-                      className="sr-only"
-                      type="file"
-                      accept="image/*"
-                      onChange={(event) => {
-                        selectReceiptFile(event.target.files?.[0]);
-                        event.currentTarget.value = "";
-                      }}
-                    />
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Button
-                      type="button"
-                      disabled={isAnalyzingImage || !receiptFile}
-                      onClick={() => void submitReceiptImage()}
-                    >
-                      {isAnalyzingImage ? (
-                        <Loader2 className="animate-spin" aria-hidden="true" />
+              {addMode === "image" ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>画像で追加</CardTitle>
+                    <CardDescription>レシート・支払い画面</CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-col gap-4">
+                    <div className="flex min-h-52 min-w-0 flex-col items-center justify-center gap-3 overflow-hidden rounded-lg border border-dashed border-primary/50 bg-ledger-mint/45 p-4 text-center">
+                      {receiptImageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={receiptImageUrl}
+                          alt="選択したレシート"
+                          className="max-h-56 max-w-full rounded-md object-contain"
+                        />
                       ) : (
-                        <Camera aria-hidden="true" />
+                        <>
+                          <ImagePlus className="size-10 text-primary" aria-hidden="true" />
+                          <span className="font-semibold">写真を追加</span>
+                        </>
                       )}
-                      画像登録
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() =>
-                        setDraftExpense((current) => ({
-                          ...current,
-                          storeName:
-                            current.storeName === "手動入力"
-                              ? "画像確認後に入力"
-                              : current.storeName,
-                        }))
-                      }
-                    >
-                      <Edit3 aria-hidden="true" />
-                      手動へ反映
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+                    </div>
 
-              <ExpenseForm
-                draft={draftExpense}
-                disabled={isSending}
-                onChange={setDraftExpense}
-                onSubmit={submitExpense}
-              />
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button variant="outline" asChild>
+                        <label htmlFor="receipt-camera">
+                          <Camera aria-hidden="true" />
+                          撮影
+                        </label>
+                      </Button>
+                      <Input
+                        id="receipt-camera"
+                        className="sr-only"
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={(event) => {
+                          selectReceiptFile(event.target.files?.[0]);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+
+                      <Button variant="outline" asChild>
+                        <label htmlFor="receipt-library">
+                          <ImagePlus aria-hidden="true" />
+                          写真から選択
+                        </label>
+                      </Button>
+                      <Input
+                        id="receipt-library"
+                        className="sr-only"
+                        type="file"
+                        accept="image/*"
+                        onChange={(event) => {
+                          selectReceiptFile(event.target.files?.[0]);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Button
+                        type="button"
+                        disabled={isAnalyzingImage || !receiptFile}
+                        onClick={() => void submitReceiptImage()}
+                      >
+                        {isAnalyzingImage ? (
+                          <Loader2 className="animate-spin" aria-hidden="true" />
+                        ) : (
+                          <Camera aria-hidden="true" />
+                        )}
+                        画像登録
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setDraftExpense((current) => ({
+                            ...current,
+                            storeName:
+                              current.storeName === "手動入力"
+                                ? "画像確認後に入力"
+                                : current.storeName,
+                            memo: current.memo ?? "",
+                          }));
+                          setAddMode("manual");
+                        }}
+                      >
+                        <Edit3 aria-hidden="true" />
+                        手動へ反映
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <ExpenseForm
+                  draft={draftExpense}
+                  disabled={isSending}
+                  onChange={setDraftExpense}
+                  onSubmit={submitExpense}
+                />
+              )}
             </div>
           </TabsContent>
           ) : null}
@@ -802,8 +846,8 @@ export function KakeiboLiffApp() {
 
           {activeTab === "plans" ? (
           <TabsContent value="plans">
-            <div className="grid gap-5 lg:grid-cols-3">
-              <Card className="lg:col-span-2">
+            <div className="grid gap-5">
+              <Card>
                 <CardHeader>
                   <CardTitle>予定登録</CardTitle>
                   <CardDescription>Google カレンダー連携</CardDescription>
@@ -890,39 +934,15 @@ export function KakeiboLiffApp() {
                 </CardContent>
               </Card>
 
-              <div className="grid gap-5">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Calendar</CardTitle>
-                    <CardDescription>表示月の予定</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <CalendarEventList events={calendarEvents.slice(0, 5)} />
-                  </CardContent>
-                </Card>
-                <ActionGroup
-                  title="サブスク"
-                  description="定期支払い"
-                  actions={[
-                    ["一覧", "@サブスク一覧", RefreshCw],
-                    ["追加", "@サブスク追加", Plus],
-                    ["変更", "@サブスク変更", Edit3],
-                    ["削除", "@サブスク削除", Trash2],
-                  ]}
-                  disabled={isSending}
-                  onSend={sendCommands}
-                />
-                <ActionGroup
-                  title="家賃"
-                  description="月末自動登録"
-                  actions={[
-                    ["追加", "@家賃追加", JapaneseYen],
-                    ["変更", "@家賃変更", Edit3],
-                  ]}
-                  disabled={isSending}
-                  onSend={sendCommands}
-                />
-              </div>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Calendar</CardTitle>
+                  <CardDescription>表示月の予定</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <CalendarEventList events={calendarEvents.slice(0, 5)} />
+                </CardContent>
+              </Card>
             </div>
           </TabsContent>
           ) : null}
@@ -1049,6 +1069,30 @@ export function KakeiboLiffApp() {
                   </Button>
                 </CardContent>
               </Card>
+
+              <ActionGroup
+                title="サブスク操作"
+                description="定期支払い"
+                actions={[
+                  ["一覧", "@サブスク一覧", RefreshCw],
+                  ["追加", "@サブスク追加", Plus],
+                  ["変更", "@サブスク変更", Edit3],
+                  ["削除", "@サブスク削除", Trash2],
+                ]}
+                disabled={isSending}
+                onSend={sendCommands}
+              />
+
+              <ActionGroup
+                title="家賃操作"
+                description="月末自動登録"
+                actions={[
+                  ["追加", "@家賃追加", JapaneseYen],
+                  ["変更", "@家賃変更", Edit3],
+                ]}
+                disabled={isSending}
+                onSend={sendCommands}
+              />
 
               <Card className="lg:col-span-2">
                 <CardHeader>
@@ -1312,12 +1356,21 @@ function ExpenseForm({
             />
           </Field>
         </div>
-        <Field label="店舗・内容" htmlFor="store">
+        <Field label="内容" htmlFor="content">
           <Input
-            id="store"
+            id="content"
             value={draft.storeName}
             onChange={(event) =>
               onChange((current) => ({ ...current, storeName: event.target.value }))
+            }
+          />
+        </Field>
+        <Field label="メモ（任意）" htmlFor="memo">
+          <Textarea
+            id="memo"
+            value={draft.memo ?? ""}
+            onChange={(event) =>
+              onChange((current) => ({ ...current, memo: event.target.value }))
             }
           />
         </Field>
@@ -1362,6 +1415,11 @@ function ExpenseRow({
         <p className="text-sm text-muted-foreground">
           {expense.payer} / {formatCurrency(expense.amount)}
         </p>
+        {expense.memo ? (
+          <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+            {expense.memo}
+          </p>
+        ) : null}
       </div>
       <div className="flex gap-2">
         <Dialog>
@@ -1421,14 +1479,26 @@ function ExpenseRow({
                   }
                 />
               </Field>
-              <Field label="店舗・内容" htmlFor={`${expense.id}-store`}>
+              <Field label="内容" htmlFor={`${expense.id}-content`}>
                 <Input
-                  id={`${expense.id}-store`}
+                  id={`${expense.id}-content`}
                   value={draft.storeName}
                   onChange={(event) =>
                     setDraft((current) => ({
                       ...current,
                       storeName: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+              <Field label="メモ（任意）" htmlFor={`${expense.id}-memo`}>
+                <Textarea
+                  id={`${expense.id}-memo`}
+                  value={draft.memo ?? ""}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      memo: event.target.value,
                     }))
                   }
                 />

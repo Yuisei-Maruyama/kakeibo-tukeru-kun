@@ -34,6 +34,7 @@ export interface Expense {
   amount: number;                // 金額
   category: Category;            // カテゴリー
   storeName: string;             // 店舗名
+  memo?: string;                 // メモ（オプション）
   date: Timestamp;               // レシートの日付
   imageUrl?: string;             // 画像保存先（オプション）
   calendarEventId?: string;      // Google Calendar イベントID

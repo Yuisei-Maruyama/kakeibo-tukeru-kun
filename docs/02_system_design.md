@@ -209,7 +209,8 @@
   userName: "田中",
   amount: 1280,
   category: "外食費用",        // "外食費用" or "買い物費用"
-  storeName: "サイゼリヤ",
+  storeName: "サイゼリヤ",     // 内容（店舗名・支払い内容）
+  memo: "打ち合わせ後",        // メモ（オプション）
   date: Timestamp,           // レシートの日付
   imageUrl: "gs://...",      // 画像保存先（オプション）
   calendarEventId: "xxx",    // Google Calendar イベントID
@@ -397,7 +398,8 @@ Cloud Functions + Cloud SQL = コネクション管理の複雑化
   userId: "LINE_USER_ID",
   amount: 1280,
   category: "外食費用",
-  storeName: "サイゼリヤ"
+  storeName: "サイゼリヤ",
+  memo: "打ち合わせ後"
 }
 ```
 

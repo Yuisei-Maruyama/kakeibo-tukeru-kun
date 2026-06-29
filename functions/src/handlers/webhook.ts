@@ -25,6 +25,86 @@ function validateSignature(body: string, signature: string, channelSecret: strin
   return hash === signature;
 }
 
+function isDateLike(value: string): boolean {
+  return /^\d{1,4}[/-]\d{1,2}(?:[/-]\d{1,2})?$/.test(value);
+}
+
+function parseExpenseAddDetails(
+  values: string[],
+  fallbackContent: string
+): { date: Date | null; content: string; memo?: string; invalidDate: boolean } {
+  const [first, ...rest] = values;
+
+  if (!first) {
+    return {
+      date: null,
+      content: fallbackContent,
+      invalidDate: false,
+    };
+  }
+
+  const parsedDate = parseDateString(first);
+  if (parsedDate) {
+    const [content, ...memoParts] = rest;
+    return {
+      date: parsedDate,
+      content: content || fallbackContent,
+      memo: memoParts.join(' ').trim() || undefined,
+      invalidDate: false,
+    };
+  }
+
+  if (isDateLike(first)) {
+    return {
+      date: null,
+      content: fallbackContent,
+      invalidDate: true,
+    };
+  }
+
+  return {
+    date: null,
+    content: first,
+    memo: rest.join(' ').trim() || undefined,
+    invalidDate: false,
+  };
+}
+
+function parseOptionalDateAndMemo(
+  values: string[]
+): { date: Date | null; memo?: string; invalidDate: boolean } {
+  const [first, ...rest] = values;
+
+  if (!first) {
+    return {
+      date: null,
+      invalidDate: false,
+    };
+  }
+
+  const parsedDate = parseDateString(first);
+  if (parsedDate) {
+    return {
+      date: parsedDate,
+      memo: rest.join(' ').trim() || undefined,
+      invalidDate: false,
+    };
+  }
+
+  if (isDateLike(first)) {
+    return {
+      date: null,
+      invalidDate: true,
+    };
+  }
+
+  return {
+    date: null,
+    memo: values.join(' ').trim() || undefined,
+    invalidDate: false,
+  };
+}
+
 /**
  * LINE Webhookハンドラー
  */
@@ -747,7 +827,7 @@ async function handleDeleteCommand(
 
 /**
  * 追加コマンド処理
- * 形式: @追加 {支払い者名} {カテゴリー} {金額} [{日付}]
+ * 形式: @追加 {支払い者名} {カテゴリー} {金額} [{日付}] [{内容}] [{メモ}]
  */
 async function handleAddCommand(
   replyToken: string,
@@ -759,7 +839,7 @@ async function handleAddCommand(
   mentions: any[] = []
 ): Promise<void> {
   try {
-    // 引数をパース（例: "田中 外食費用 1280" または "田中 外食費用 1280 12/1"）
+    // 引数をパース（例: "田中 外食費用 1280" または "田中 外食費用 1280 12/1 ランチ"）
     const parts = args.split(' ').filter(p => p.length > 0);
 
     if (parts.length < 3) {
@@ -774,7 +854,7 @@ async function handleAddCommand(
     const category = parts[1];
     const amountStr = parts[2].replace(/[,，]/g, '');
     const amount = parseInt(amountStr, 10);
-    const dateInput = parts.length >= 4 ? parts[3] : null; // 日付（オプション）
+    const details = parseExpenseAddDetails(parts.slice(3), '手動入力');
 
     // LINEからコマンド実行者の表示名を取得
     const displayName = await getUserDisplayName(groupId, userId, accessToken);
@@ -796,15 +876,13 @@ async function handleAddCommand(
 
     // 日付をパース
     let expenseDate: Date;
-    if (dateInput) {
-      // 日付が指定された場合（例: "12/1"、"2024/12/1"）
-      const parsedDate = parseDateString(dateInput);
-      if (!parsedDate) {
-        // 日付が不正な場合は対話で補完
-        await startAddExpenseConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
-        return;
-      }
-      expenseDate = parsedDate;
+    if (details.invalidDate) {
+      await startAddExpenseConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
+      return;
+    }
+
+    if (details.date) {
+      expenseDate = details.date;
     } else {
       // 日付が指定されない場合は今日のJST日付を使用
       const jstDate = getJSTDate();
@@ -819,8 +897,10 @@ async function handleAddCommand(
       payerName,
       amount,
       category,
-      '手動入力',
-      dateStr
+      details.content,
+      dateStr,
+      undefined,
+      details.memo
     );
 
     // Firestoreに保存（支払い者のuserIdを使用）
@@ -829,7 +909,8 @@ async function handleAddCommand(
       userName: payerName,
       amount,
       category: category,
-      storeName: '手動入力',
+      storeName: details.content,
+      memo: details.memo,
       date: Timestamp.fromDate(expenseDate),
       calendarEventId,
     });
@@ -848,9 +929,10 @@ async function handleAddCommand(
       category,
       amount,
       payerName,
-      '手動入力',
+      details.content,
       dateStr,
-      newBalance
+      newBalance,
+      details.memo
     );
 
     await replyMessage(replyToken, responseMessage, accessToken);
@@ -868,7 +950,7 @@ async function handleAddCommand(
 
 /**
  * 旅行コマンド処理
- * 形式: @旅行 {支払い者名} {金額} {店舗名} [{日付}]
+ * 形式: @旅行 {支払い者名} {金額} {内容} [{日付}] [{メモ}]
  */
 async function handleTravelCommand(
   replyToken: string,
@@ -894,8 +976,8 @@ async function handleTravelCommand(
     const payerUserId = resolved.payerUserId || userId;
     const amountStr = parts[1].replace(/[,，]/g, '');
     const amount = parseInt(amountStr, 10);
-    const storeName = parts[2]; // 店舗名
-    const dateInput = parts.length >= 4 ? parts[3] : null; // 日付（オプション）
+    const storeName = parts[2]; // 内容
+    const details = parseOptionalDateAndMemo(parts.slice(3));
 
     // LINEからコマンド実行者の表示名を取得
     const displayName = await getUserDisplayName(groupId, userId, accessToken);
@@ -911,15 +993,13 @@ async function handleTravelCommand(
 
     // 日付をパース
     let expenseDate: Date;
-    if (dateInput) {
-      // 日付が指定された場合（例: "12/20"、"2024/12/20"）
-      const parsedDate = parseDateString(dateInput);
-      if (!parsedDate) {
-        // 日付が不正な場合は対話で補完
-        await startAddTravelConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
-        return;
-      }
-      expenseDate = parsedDate;
+    if (details.invalidDate) {
+      await startAddTravelConversationWithPartialData(userId, groupId, replyToken, accessToken, parts, mentions);
+      return;
+    }
+
+    if (details.date) {
+      expenseDate = details.date;
     } else {
       // 日付が指定されない場合は今日のJST日付を使用
       const jstDate = getJSTDate();
@@ -935,7 +1015,9 @@ async function handleTravelCommand(
       amount,
       '旅行費用',
       storeName,
-      dateStr
+      dateStr,
+      undefined,
+      details.memo
     );
 
     // Firestoreに保存（支払い者のuserIdを使用）
@@ -945,6 +1027,7 @@ async function handleTravelCommand(
       amount,
       category: '旅行費用',
       storeName,
+      memo: details.memo,
       date: Timestamp.fromDate(expenseDate),
       calendarEventId,
     });
@@ -955,7 +1038,9 @@ async function handleTravelCommand(
       amount,
       payerName,
       storeName,
-      dateStr
+      dateStr,
+      undefined,
+      details.memo
     );
 
     await replyMessage(replyToken, responseMessage, accessToken);
