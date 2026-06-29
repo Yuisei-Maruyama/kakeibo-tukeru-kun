@@ -4,7 +4,7 @@ import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, g
 import { pushMessage, createReportMessage } from '../services/line.js';
 import { getTodaySchedules, getMonthlyExpenseEvents, createCalendarEvent } from '../services/calendar.js';
 import { ReportData, ReportType, UserExpenses, MonthlySummary, Category } from '../types/index.js';
-import { getJSTYear, getJSTMonth, getJSTDate, getJSTInfo, isCurrentMonthJST } from '../utils/date.js';
+import { formatDateYYYYMMDD, getJSTYear, getJSTMonth, getJSTDate, getJSTInfo, getStoredExpenseMonthRange, isCurrentMonthJST } from '../utils/date.js';
 
 /**
  * 定期レポートハンドラー
@@ -356,6 +356,7 @@ export async function handleDailyScheduleNotification(_req: Request, res: Respon
     let message = `📅 本日の予定 (${jstInfo.month}/${jstInfo.day})\n\n`;
     schedules.forEach((schedule, index) => {
       message += `${index + 1}. 👤 ${schedule.userName}\n`;
+      message += `   ⏰ ${schedule.timeLabel}\n`;
       message += `   📝 ${schedule.content}\n\n`;
     });
 
@@ -393,12 +394,23 @@ function formatDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+type CalendarSyncPeriodResult = {
+  year: number;
+  month: number;
+  synced: number;
+  updated: number;
+  skipped: number;
+  deleted: number;
+  errors: number;
+  total: number;
+};
+
 /**
  * Googleカレンダー同期ハンドラー
- * Googleカレンダーの当月の支出イベントをFirestoreに同期
+ * Googleカレンダーの対象月の支出イベントをFirestoreに同期
  * 既存イベントは内容が変更されていれば更新する
  */
-export async function handleCalendarSync(_req: Request, res: Response): Promise<void> {
+export async function handleCalendarSync(req: Request, res: Response): Promise<void> {
   try {
     const calendarId = process.env.GOOGLE_CALENDAR_ID || '';
 
@@ -408,192 +420,69 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
       return;
     }
 
-    // JST（日本時間）で年月を取得
-    const year = getJSTYear();
-    const month = getJSTMonth();
+    const hasRequestedYear = req.body?.year !== undefined;
+    const hasRequestedMonth = req.body?.month !== undefined;
+
+    if (hasRequestedYear !== hasRequestedMonth) {
+      res.status(400).json({ error: 'Both year and month are required when specifying a sync period' });
+      return;
+    }
+
+    const requestedYear = Number(req.body?.year);
+    const requestedMonth = Number(req.body?.month);
+
+    if (
+      hasRequestedYear &&
+      (!Number.isInteger(requestedYear) ||
+        !Number.isInteger(requestedMonth) ||
+        requestedYear < 2000 ||
+        requestedMonth < 1 ||
+        requestedMonth > 12)
+    ) {
+      res.status(400).json({ error: 'Invalid year or month' });
+      return;
+    }
+
+    const currentYear = getJSTYear();
+    const currentMonth = getJSTMonth();
+    const periods = hasRequestedYear
+      ? [{ year: requestedYear, month: requestedMonth }]
+      : [0, 1, 2].map(monthOffset => {
+          const date = new Date(Date.UTC(currentYear, currentMonth - 1 - monthOffset, 1, 0, 0, 0, 0));
+          return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 };
+        });
     const jstInfo = getJSTInfo();
 
-    console.log(`Starting calendar sync for ${year}/${month} (JST: ${jstInfo.formatted})`);
+    console.log(`Starting calendar sync for ${periods.map(period => `${period.year}/${period.month}`).join(', ')} (JST now: ${jstInfo.formatted})`);
 
-    // Googleカレンダーから当月の支出イベントを取得
-    const expenseEvents = await getMonthlyExpenseEvents(calendarId, year, month);
-
-    let syncedCount = 0;
-    let updatedCount = 0;
-    let skippedCount = 0;
-    let errorCount = 0;
-    let deletedCount = 0;
-
-    // 各イベントをFirestoreに同期
-    for (const event of expenseEvents) {
-      try {
-        // カレンダーイベントIDで既存の支出を取得
-        const existingExpense = await getExpenseByCalendarEventId(event.eventId);
-
-        if (existingExpense) {
-          // 既存イベントがある場合、内容が変更されているかチェック
-          const hasChanges =
-            existingExpense.amount !== event.amount ||
-            existingExpense.userName !== event.userName ||
-            existingExpense.category !== event.category ||
-            existingExpense.storeName !== event.storeName;
-
-          if (hasChanges) {
-            // ユーザー名からユーザーIDを取得
-            const userId = await getUserIdByDisplayName(event.userName);
-            if (!userId) {
-              console.warn(`User not found for update: ${event.userName}`);
-              errorCount++;
-              continue;
-            }
-
-            // 外食費用の残高調整（現在の月の支出のみ）
-            if ((existingExpense.category === '外食費用' || event.category === '外食費用') && isCurrentMonthJST(event.date)) {
-              const oldUserId = existingExpense.userId;
-              const oldUser = await getUser(oldUserId);
-
-              // 旧カテゴリーが外食費用なら残高を戻す
-              if (existingExpense.category === '外食費用' && oldUser) {
-                const restoredBalance = oldUser.diningBalance + existingExpense.amount;
-                await updateDiningBalance(oldUserId, restoredBalance);
-                console.log(`Restored dining balance for ${existingExpense.userName}: +${existingExpense.amount}`);
-              }
-
-              // 新カテゴリーが外食費用なら残高を引く
-              if (event.category === '外食費用') {
-                const newUser = await getUser(userId);
-                if (newUser) {
-                  const newBalance = newUser.diningBalance - event.amount;
-                  await updateDiningBalance(userId, newBalance);
-                  console.log(`Updated dining balance for ${event.userName}: -${event.amount}`);
-                }
-              }
-            }
-
-            // 支出を更新
-            await updateExpense(existingExpense.id!, {
-              userId,
-              userName: event.userName,
-              amount: event.amount,
-              category: event.category,
-              storeName: event.storeName,
-              date: Timestamp.fromDate(new Date(event.date)),
-            });
-
-            console.log(`Updated event: ${event.eventId} - ${event.userName} ¥${event.amount}`);
-            updatedCount++;
-          } else {
-            console.log(`Event unchanged: ${event.eventId}`);
-            skippedCount++;
-          }
-          continue;
-        }
-
-        // 新規イベントの場合
-        // ユーザー名からユーザーIDを取得
-        const userId = await getUserIdByDisplayName(event.userName);
-        if (!userId) {
-          console.warn(`User not found: ${event.userName}`);
-          errorCount++;
-          continue;
-        }
-
-        // 手動入力済みの支出（calendarEventIdなし）が存在するかチェック
-        const manualExpense = await findExpenseWithoutCalendarEventId(
-          userId,
-          new Date(event.date),
-          event.amount,
-          event.category
-        );
-
-        if (manualExpense) {
-          // 手動入力済みの支出にcalendarEventIdを紐付けるだけ（残高は減算しない）
-          await updateExpense(manualExpense.id!, {
-            calendarEventId: event.eventId,
-          });
-          console.log(`Linked calendar event to manual expense: ${event.eventId} - ${event.userName} ¥${event.amount}`);
-          skippedCount++; // 紐付けのみなのでskippedとしてカウント
-          continue;
-        }
-
-        // 完全に新規のイベント：Firestoreに保存
-        await saveExpense({
-          userId,
-          userName: event.userName,
-          amount: event.amount,
-          category: event.category,
-          storeName: event.storeName,
-          date: Timestamp.fromDate(new Date(event.date)),
-          calendarEventId: event.eventId,
-        });
-
-        // 外食費用かつ現在の月の場合のみ残高を更新
-        if (event.category === '外食費用' && isCurrentMonthJST(event.date)) {
-          const user = await getUser(userId);
-          if (user) {
-            const newBalance = user.diningBalance - event.amount;
-            await updateDiningBalance(userId, newBalance);
-            console.log(`Updated dining balance for ${event.userName}: ${newBalance}`);
-          }
-        }
-
-        console.log(`Synced event: ${event.eventId} - ${event.userName} ¥${event.amount}`);
-        syncedCount++;
-      } catch (error) {
-        console.error(`Failed to sync event ${event.eventId}:`, error);
-        errorCount++;
-      }
+    const results: CalendarSyncPeriodResult[] = [];
+    for (const period of periods) {
+      results.push(await syncCalendarExpensesForMonth(calendarId, period.year, period.month));
     }
 
-    // カレンダーにないFirestoreの支出を削除
-    console.log('Checking for deleted calendar events...');
+    const totals = results.reduce(
+      (sum, result) => ({
+        synced: sum.synced + result.synced,
+        updated: sum.updated + result.updated,
+        skipped: sum.skipped + result.skipped,
+        deleted: sum.deleted + result.deleted,
+        errors: sum.errors + result.errors,
+        total: sum.total + result.total,
+      }),
+      { synced: 0, updated: 0, skipped: 0, deleted: 0, errors: 0, total: 0 }
+    );
 
-    // カレンダーイベントIDのセットを作成
-    const calendarEventIds = new Set(expenseEvents.map(e => e.eventId));
-
-    // Firestoreから当月の支出を取得（calendarEventIdが存在するもののみ）
-    const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
-    const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
-    const firestoreExpenses = await getExpensesByDateRange(startDate, endDate);
-
-    // カレンダーイベントIDを持つがカレンダーに存在しない支出を削除
-    for (const expense of firestoreExpenses) {
-      if (expense.calendarEventId && !calendarEventIds.has(expense.calendarEventId)) {
-        try {
-          console.log(`Deleting expense (calendar event removed): ${expense.calendarEventId} - ${expense.userName} ¥${expense.amount}`);
-
-          // 外食費用かつ現在の月の場合のみ残高を戻す
-          const expenseDate = expense.date.toDate();
-          const expenseDateStr = `${expenseDate.getUTCFullYear()}-${String(expenseDate.getUTCMonth() + 1).padStart(2, '0')}-${String(expenseDate.getUTCDate()).padStart(2, '0')}`;
-          if (expense.category === '外食費用' && isCurrentMonthJST(expenseDateStr)) {
-            const user = await getUser(expense.userId);
-            if (user) {
-              const restoredBalance = user.diningBalance + expense.amount;
-              await updateDiningBalance(expense.userId, restoredBalance);
-              console.log(`Restored dining balance for ${expense.userName}: +${expense.amount}`);
-            }
-          }
-
-          // 支出を削除
-          await deleteExpenseById(expense.id!);
-          deletedCount++;
-        } catch (error) {
-          console.error(`Failed to delete expense ${expense.id}:`, error);
-          errorCount++;
-        }
-      }
-    }
-
-    console.log(`Calendar sync completed: ${syncedCount} synced, ${updatedCount} updated, ${skippedCount} skipped, ${deletedCount} deleted, ${errorCount} errors`);
+    console.log(`Calendar sync completed: ${totals.synced} synced, ${totals.updated} updated, ${totals.skipped} skipped, ${totals.deleted} deleted, ${totals.errors} errors`);
 
     res.status(200).json({
       status: 'ok',
-      synced: syncedCount,
-      updated: updatedCount,
-      skipped: skippedCount,
-      deleted: deletedCount,
-      errors: errorCount,
-      total: expenseEvents.length,
+      synced: totals.synced,
+      updated: totals.updated,
+      skipped: totals.skipped,
+      deleted: totals.deleted,
+      errors: totals.errors,
+      total: totals.total,
+      periods: results,
     });
   } catch (error) {
     console.error('Calendar sync error:', error);
@@ -601,6 +490,171 @@ export async function handleCalendarSync(_req: Request, res: Response): Promise<
       error: 'Internal server error',
     });
   }
+}
+
+async function syncCalendarExpensesForMonth(
+  calendarId: string,
+  year: number,
+  month: number
+): Promise<CalendarSyncPeriodResult> {
+  console.log(`Starting calendar sync period: ${year}/${month}`);
+
+  const expenseEvents = await getMonthlyExpenseEvents(calendarId, year, month);
+
+  let syncedCount = 0;
+  let updatedCount = 0;
+  let skippedCount = 0;
+  let errorCount = 0;
+  let deletedCount = 0;
+
+  for (const event of expenseEvents) {
+    try {
+      const existingExpense = await getExpenseByCalendarEventId(event.eventId);
+
+      if (existingExpense) {
+        const hasChanges =
+          existingExpense.amount !== event.amount ||
+          existingExpense.userName !== event.userName ||
+          existingExpense.category !== event.category ||
+          existingExpense.storeName !== event.storeName;
+
+        if (hasChanges) {
+          const userId = await getUserIdByDisplayName(event.userName);
+          if (!userId) {
+            console.warn(`User not found for update: ${event.userName}`);
+            errorCount++;
+            continue;
+          }
+
+          if ((existingExpense.category === '外食費用' || event.category === '外食費用') && isCurrentMonthJST(event.date)) {
+            const oldUserId = existingExpense.userId;
+            const oldUser = await getUser(oldUserId);
+
+            if (existingExpense.category === '外食費用' && oldUser) {
+              const restoredBalance = oldUser.diningBalance + existingExpense.amount;
+              await updateDiningBalance(oldUserId, restoredBalance);
+              console.log(`Restored dining balance for ${existingExpense.userName}: +${existingExpense.amount}`);
+            }
+
+            if (event.category === '外食費用') {
+              const newUser = await getUser(userId);
+              if (newUser) {
+                const newBalance = newUser.diningBalance - event.amount;
+                await updateDiningBalance(userId, newBalance);
+                console.log(`Updated dining balance for ${event.userName}: -${event.amount}`);
+              }
+            }
+          }
+
+          await updateExpense(existingExpense.id!, {
+            userId,
+            userName: event.userName,
+            amount: event.amount,
+            category: event.category,
+            storeName: event.storeName,
+            date: Timestamp.fromDate(new Date(event.date)),
+          });
+
+          console.log(`Updated event: ${event.eventId} - ${event.userName} ¥${event.amount}`);
+          updatedCount++;
+        } else {
+          console.log(`Event unchanged: ${event.eventId}`);
+          skippedCount++;
+        }
+        continue;
+      }
+
+      const userId = await getUserIdByDisplayName(event.userName);
+      if (!userId) {
+        console.warn(`User not found: ${event.userName}`);
+        errorCount++;
+        continue;
+      }
+
+      const manualExpense = await findExpenseWithoutCalendarEventId(
+        userId,
+        new Date(event.date),
+        event.amount,
+        event.category
+      );
+
+      if (manualExpense) {
+        await updateExpense(manualExpense.id!, {
+          calendarEventId: event.eventId,
+        });
+        console.log(`Linked calendar event to manual expense: ${event.eventId} - ${event.userName} ¥${event.amount}`);
+        skippedCount++;
+        continue;
+      }
+
+      await saveExpense({
+        userId,
+        userName: event.userName,
+        amount: event.amount,
+        category: event.category,
+        storeName: event.storeName,
+        date: Timestamp.fromDate(new Date(event.date)),
+        calendarEventId: event.eventId,
+      });
+
+      if (event.category === '外食費用' && isCurrentMonthJST(event.date)) {
+        const user = await getUser(userId);
+        if (user) {
+          const newBalance = user.diningBalance - event.amount;
+          await updateDiningBalance(userId, newBalance);
+          console.log(`Updated dining balance for ${event.userName}: ${newBalance}`);
+        }
+      }
+
+      console.log(`Synced event: ${event.eventId} - ${event.userName} ¥${event.amount}`);
+      syncedCount++;
+    } catch (error) {
+      console.error(`Failed to sync event ${event.eventId}:`, error);
+      errorCount++;
+    }
+  }
+
+  console.log(`Checking for deleted calendar events in ${year}/${month}...`);
+
+  const calendarEventIds = new Set(expenseEvents.map(e => e.eventId));
+  const { start: startDate, end: endDate } = getStoredExpenseMonthRange(year, month);
+  const firestoreExpenses = await getExpensesByDateRange(startDate, endDate);
+
+  for (const expense of firestoreExpenses) {
+    if (expense.calendarEventId && !calendarEventIds.has(expense.calendarEventId)) {
+      try {
+        console.log(`Deleting expense (calendar event removed): ${expense.calendarEventId} - ${expense.userName} ¥${expense.amount}`);
+
+        const expenseDate = expense.date.toDate();
+        const expenseDateStr = formatDateYYYYMMDD(expenseDate);
+        if (expense.category === '外食費用' && isCurrentMonthJST(expenseDateStr)) {
+          const user = await getUser(expense.userId);
+          if (user) {
+            const restoredBalance = user.diningBalance + expense.amount;
+            await updateDiningBalance(expense.userId, restoredBalance);
+            console.log(`Restored dining balance for ${expense.userName}: +${expense.amount}`);
+          }
+        }
+
+        await deleteExpenseById(expense.id!);
+        deletedCount++;
+      } catch (error) {
+        console.error(`Failed to delete expense ${expense.id}:`, error);
+        errorCount++;
+      }
+    }
+  }
+
+  return {
+    year,
+    month,
+    synced: syncedCount,
+    updated: updatedCount,
+    skipped: skippedCount,
+    deleted: deletedCount,
+    errors: errorCount,
+    total: expenseEvents.length,
+  };
 }
 
 /**

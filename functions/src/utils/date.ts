@@ -59,6 +59,77 @@ export function formatDateYYYYMMDD(date?: Date): string {
 }
 
 /**
+ * JSTの日付として扱う文字列に日数を加算する
+ * @param dateStr - YYYY-MM-DD形式の日付
+ * @param days - 加算する日数
+ */
+export function addDaysToDateString(dateStr: string, days: number): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days, 0, 0, 0, 0));
+  return formatDateYYYYMMDD(date);
+}
+
+/**
+ * JSTの1日をCalendar API検索用のUTC範囲に変換する
+ * @param date - UTCフィールドがJST年月日を表すDate
+ */
+export function getJSTCalendarDayRange(date: Date): { start: Date; end: Date } {
+  const start = new Date(Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+    -9,
+    0,
+    0,
+    0
+  ));
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+
+  return { start, end };
+}
+
+/**
+ * JSTの指定月をCalendar API検索用のUTC範囲に変換する
+ * @param year - 年（例: 2026）
+ * @param month - 月（1-12）
+ */
+export function getJSTCalendarMonthRange(year: number, month: number): { start: Date; end: Date } {
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1, -9, 0, 0, 0)),
+    end: new Date(Date.UTC(year, month, 1, -9, 0, 0, 0)),
+  };
+}
+
+/**
+ * Firestoreに保存している支出日付用の月範囲を取得する
+ * 支出の日付は既存実装に合わせ、YYYY-MM-DDをUTC 0:00として保存している
+ */
+export function getStoredExpenseMonthRange(year: number, month: number): { start: Date; end: Date } {
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0)),
+    end: new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)),
+  };
+}
+
+/**
+ * DateをJSTの日付文字列（YYYY-MM-DD）に変換する
+ */
+export function formatDateInJST(date: Date): string {
+  const jstDate = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  return formatDateYYYYMMDD(jstDate);
+}
+
+/**
+ * DateをJSTの時刻文字列（HH:mm）に変換する
+ */
+export function formatTimeInJST(date: Date): string {
+  const jstDate = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  const hours = String(jstDate.getUTCHours()).padStart(2, '0');
+  const minutes = String(jstDate.getUTCMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+/**
  * 指定した年月の1日（JST）のDateオブジェクトを取得
  * @param year - 年（例: 2025）
  * @param month - 月（1-12）
