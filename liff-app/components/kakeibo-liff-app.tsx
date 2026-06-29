@@ -123,6 +123,14 @@ const commandTiles = [
   { label: "キャンセル", command: "@キャンセル", icon: XCircle },
 ];
 
+const navigationItems = [
+  { value: "home", label: "ホーム", icon: Home },
+  { value: "add", label: "追加", icon: Plus },
+  { value: "history", label: "履歴", icon: ReceiptText },
+  { value: "plans", label: "予定", icon: CalendarDays },
+  { value: "settings", label: "設定", icon: Settings },
+];
+
 function runAfterInitialPaint(callback: () => void) {
   const idleWindow = window as Window & {
     requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
@@ -363,44 +371,36 @@ export function KakeiboLiffApp() {
   }
 
   return (
-    <main className="ledger-grid min-h-dvh bg-background px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))]">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
-        <header className="rounded-lg border bg-card/95 px-4 py-4 shadow-ledger backdrop-blur">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-3">
-              <div className="grid size-12 place-items-center rounded-md bg-primary text-primary-foreground">
+    <main className="ledger-grid min-h-dvh bg-background px-3 pb-[calc(6.75rem+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)] text-foreground">
+      <div className="mx-auto flex w-full max-w-md flex-col gap-4">
+        <header className="sticky top-0 z-30 -mx-3 border-b bg-background/95 px-3 py-3 backdrop-blur-xl">
+          <div className="mx-auto flex w-full max-w-md items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid size-11 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground shadow-ledger">
                 <ReceiptText className="size-6" aria-hidden="true" />
               </div>
-              <div>
-                <h1 className="text-2xl font-black leading-tight tracking-normal">
+              <div className="min-w-0">
+                <h1 className="truncate text-xl font-black leading-tight tracking-normal">
                   家計ぼっと LIFF
                 </h1>
-                <p className="text-sm text-muted-foreground">
+                <p className="truncate text-xs font-semibold text-muted-foreground">
                   {liffSession.profile?.displayName ?? "LINE 家計簿"}
                 </p>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <Badge
                 variant={dashboard?.source === "live" ? "default" : "outline"}
-                className="min-h-8"
+                className="hidden min-h-8 sm:inline-flex"
               >
                 {dashboard?.source === "live" ? "実データ" : "プレビュー"}
-              </Badge>
-              <Badge
-                variant={liffSession.canSendMessages ? "default" : "secondary"}
-                className="min-h-8"
-              >
-                {isInitializing ? (
-                  <Loader2 className="mr-1 size-3 animate-spin" aria-hidden="true" />
-                ) : null}
-                {liffSession.message}
               </Badge>
               <Button
                 type="button"
                 variant="outline"
-                size="sm"
+                size="icon"
+                aria-label="データを更新"
                 disabled={isLoadingDashboard}
                 onClick={() => void loadDashboard()}
               >
@@ -414,51 +414,80 @@ export function KakeiboLiffApp() {
               <Button
                 type="button"
                 variant="outline"
-                size="sm"
+                size="icon"
+                aria-label="LIFFを閉じる"
                 onClick={() => closeLiffWindow()}
               >
                 <XCircle aria-hidden="true" />
-                閉じる
               </Button>
             </div>
           </div>
         </header>
 
-        <section aria-live="polite" className="rounded-md border bg-card px-4 py-3 text-sm">
-          <div className="flex items-center gap-2">
+        <section
+          aria-live="polite"
+          className="rounded-md border bg-card/95 px-4 py-3 text-sm shadow-ledger"
+        >
+          <div className="flex items-start gap-2">
             <CheckCircle2 className="size-4 text-primary" aria-hidden="true" />
-            <span>{toast}</span>
+            <div className="min-w-0">
+              <p className="break-words font-semibold">{toast}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {isInitializing ? "LIFFを確認中" : liffSession.message}
+              </p>
+            </div>
           </div>
         </section>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 gap-1 md:grid-cols-5">
-            <TabsTrigger value="home">
-              <Home className="mr-2 size-4" aria-hidden="true" />
-              ホーム
-            </TabsTrigger>
-            <TabsTrigger value="add">
-              <Plus className="mr-2 size-4" aria-hidden="true" />
-              追加
-            </TabsTrigger>
-            <TabsTrigger value="history">
-              <ReceiptText className="mr-2 size-4" aria-hidden="true" />
-              履歴
-            </TabsTrigger>
-            <TabsTrigger value="plans">
-              <CalendarDays className="mr-2 size-4" aria-hidden="true" />
-              予定
-            </TabsTrigger>
-            <TabsTrigger value="settings">
-              <Settings className="mr-2 size-4" aria-hidden="true" />
-              設定
-            </TabsTrigger>
-          </TabsList>
-
           {activeTab === "home" ? (
           <TabsContent value="home">
-            <div className="grid gap-5 lg:grid-cols-[1fr_1.3fr]">
-              <section className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
+            <div className="grid gap-4">
+              <section className="rounded-lg border bg-card p-4 shadow-ledger">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-muted-foreground">
+                      今すぐ記録
+                    </p>
+                    <h2 className="mt-1 text-2xl font-black leading-tight">
+                      レシートを撮るだけ
+                    </h2>
+                  </div>
+                  <Badge variant={dashboard?.source === "live" ? "default" : "outline"}>
+                    {dashboard?.source === "live" ? "実データ" : "プレビュー"}
+                  </Badge>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <Button
+                    type="button"
+                    className="h-16 flex-col gap-1 px-2 text-xs active:scale-[0.98] [&_svg]:size-5"
+                    onClick={() => setActiveTab("add")}
+                  >
+                    <Camera className="size-5" aria-hidden="true" />
+                    撮影
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-16 flex-col gap-1 px-2 text-xs active:scale-[0.98] [&_svg]:size-5"
+                    onClick={() => setActiveTab("add")}
+                  >
+                    <Plus className="size-5" aria-hidden="true" />
+                    手入力
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-16 flex-col gap-1 px-2 text-xs active:scale-[0.98] [&_svg]:size-5"
+                    onClick={() => setActiveTab("history")}
+                  >
+                    <ClipboardList className="size-5" aria-hidden="true" />
+                    履歴
+                  </Button>
+                </div>
+              </section>
+
+              <section className="grid gap-3">
                 <MetricCard
                   label="外食残高"
                   value={formatCurrency(liveDiningBalance)}
@@ -505,7 +534,7 @@ export function KakeiboLiffApp() {
                 </CardContent>
               </Card>
 
-              <Card className="lg:col-span-2">
+              <Card>
                 <CardHeader>
                   <CardTitle>今月のデータ</CardTitle>
                   <CardDescription>
@@ -984,6 +1013,22 @@ export function KakeiboLiffApp() {
             </div>
           </TabsContent>
           ) : null}
+
+          <TabsList
+            aria-label="主要ナビゲーション"
+            className="fixed inset-x-0 bottom-0 z-40 mx-auto grid w-full max-w-md grid-cols-5 gap-1 rounded-none border-t bg-card/95 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 shadow-[0_-18px_40px_rgba(18,61,53,0.14)] backdrop-blur-xl"
+          >
+            {navigationItems.map((item) => (
+              <TabsTrigger
+                key={item.value}
+                value={item.value}
+                className="min-h-14 flex-col gap-1 rounded-md px-1 py-2 text-[0.68rem] leading-none active:scale-[0.98] [&_svg]:size-5"
+              >
+                <item.icon className="mr-0 size-5" aria-hidden="true" />
+                <span>{item.label}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
         </Tabs>
       </div>
     </main>
@@ -1113,7 +1158,7 @@ function CategorySelect({
       id={id}
       value={value}
       onChange={(event) => onChange(event.target.value as ExpenseCategory)}
-      className="h-11 w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+      className="h-12 w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
     >
       {categories.map((category) => (
         <option key={category} value={category}>

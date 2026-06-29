@@ -93,10 +93,13 @@ Firestore / Google Calendar 取得には、Next.js 実行環境から Google App
 1. LINE Developers コンソールで LINEログインチャネルを作成または選択する。
 2. `LIFF` タブで LIFF アプリを追加する。
 3. エンドポイントURLにデプロイ後の LIFF アプリ URL を設定する。
-4. Scope は少なくとも `openid`、`profile`、`chat_message.write` を選択する。
+4. サイズはスマートフォン前提で `Full` を選択する。
+5. Scope は少なくとも `openid`、`profile`、`chat_message.write` を選択する。
    - `openid`: `liff.getIDToken()` で API 認証するために必要
    - `profile`: `liff.getProfile()` で表示名を出すために必要
    - `chat_message.write`: `liff.sendMessages()` で既存 bot コマンドを LINE トークへ送るために必要
+6. 友だち追加オプションは `On (Normal)` を推奨する。
+7. Scan QR はこのアプリでは使用しないため `Off` にする。
 
 ## Google Cloud 側の設定
 
@@ -156,6 +159,8 @@ LIFF_DASHBOARD_AUTH_DISABLED=true
 - 色だけに依存せず、アイコン・テキスト・バッジで状態を表す
 
 テーマカラーは家計簿を連想する台帳グリーン、小口現金の金色、紙の背景色を中心にする。
+
+スマートフォンの LIFF 体験を優先し、画面幅はモバイルアプリ相当の単一カラムに寄せる。主要導線は下部固定ナビゲーション、ホーム先頭のクイック追加、下から開く編集シートで構成する。
 
 ## 表示速度方針
 

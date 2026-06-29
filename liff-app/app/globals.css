@@ -59,6 +59,7 @@
 
 html {
   min-width: 320px;
+  scroll-padding-bottom: calc(7rem + env(safe-area-inset-bottom));
 }
 
 body {
@@ -67,6 +68,7 @@ body {
   font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
   letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
   text-rendering: optimizeLegibility;
 }
 
@@ -75,6 +77,17 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+select,
+textarea {
+  accent-color: hsl(var(--primary));
 }
 
 :focus-visible {
