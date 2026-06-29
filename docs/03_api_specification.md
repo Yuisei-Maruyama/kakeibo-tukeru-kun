@@ -183,8 +183,9 @@ X-Line-Signature: {signature}
 **処理内容:**
 - Googleカレンダーから対象月の支出イベントをJST月境界で取得（未指定時は当月・先月・先々月）
 - タイトルをパースしてカテゴリー・ユーザー名・金額を抽出
-- Firestoreに未登録のイベントを追加し、既存イベントは内容変更があれば更新
-- Calendar側で削除されたイベントはFirestoreからも削除
+- Firestoreに未登録のイベントを追加し、既存イベントは内容・日付変更があれば更新
+- 対象月一覧にない既存イベントはイベントIDでCalendar上の存在を確認し、存在しない場合のみFirestoreから削除
+- Calendar上に存在するがタイトルをパースできないイベントは、誤削除を防ぐためFirestoreから削除しない
 - 外食費用かつ現在月の場合のみ残高を更新・復元
 
 ---
@@ -207,9 +208,9 @@ X-Line-Signature: {signature}
 {
   "status": "ok",
   "registered": 3,
-  "subscriptions": [
-    { "name": "Netflix", "amount": 1490, "date": "2024-12-15" }
-  ]
+  "skipped": 1,
+  "errors": 0,
+  "total": 4
 }
 ```
 
@@ -217,6 +218,7 @@ X-Line-Signature: {signature}
 - 登録されているサブスク情報を取得
 - 各サブスクの開始日と間隔から、当月の該当日付を算出
 - 該当日がある場合、「買い物費用」としてFirestore・Googleカレンダーに登録
+- 同じ支払者・日付・金額・カテゴリー・支払い内容の支出が既にある場合は重複登録せずスキップ
 - LINEグループに登録完了を通知
 
 ---

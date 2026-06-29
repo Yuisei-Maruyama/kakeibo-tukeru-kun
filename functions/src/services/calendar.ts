@@ -295,6 +295,42 @@ export async function getCalendarEvents(
   }
 }
 
+function getCalendarApiStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+
+  const apiError = error as { code?: number; response?: { status?: number } };
+  return apiError.code || apiError.response?.status;
+}
+
+export async function getCalendarEvent(
+  calendarId: string,
+  eventId: string
+): Promise<calendar_v3.Schema$Event | null> {
+  try {
+    const calendar = getCalendarClient();
+    const response = await calendar.events.get({
+      calendarId,
+      eventId,
+    });
+
+    if (response.data.status === 'cancelled') {
+      return null;
+    }
+
+    return response.data;
+  } catch (error) {
+    const status = getCalendarApiStatus(error);
+    if (status === 404 || status === 410) {
+      return null;
+    }
+
+    console.error('Failed to check calendar event existence:', error);
+    throw error;
+  }
+}
+
 /**
  * 特定の日の予定（緑色=colorId:10のイベント、またはタイトルに「予定」を含むイベント）を取得
  */
@@ -349,7 +385,7 @@ export async function getTodaySchedules(
     return schedules;
   } catch (error) {
     console.error('Failed to get today schedules:', error);
-    return [];
+    throw error;
   }
 }
 
@@ -365,12 +401,22 @@ export interface ParsedExpenseEvent {
   date: string; // YYYY-MM-DD
 }
 
+export interface MonthlyExpenseEventsForSync {
+  expenseEvents: ParsedExpenseEvent[];
+  calendarEventIds: Set<string>;
+}
+
 export function parseExpenseEventTitle(
   event: calendar_v3.Schema$Event
 ): ParsedExpenseEvent | null {
   try {
     const summary = event.summary || '';
     const eventId = event.id || '';
+
+    if (!eventId) {
+      console.warn(`No event ID found in event: ${summary}`);
+      return null;
+    }
 
     // 柔軟なパースパターン
     // パターン1: [カテゴリー] ユーザー名 ¥金額 (店舗名)
@@ -518,16 +564,21 @@ export function parseExpenseEventTitle(
 /**
  * 対象月の支出イベントを取得（外食費用・買い物費用・旅行費用）
  */
-export async function getMonthlyExpenseEvents(
+export async function getMonthlyExpenseEventsForSync(
   calendarId: string,
   year: number,
   month: number // 1-12
-): Promise<ParsedExpenseEvent[]> {
+): Promise<MonthlyExpenseEventsForSync> {
   try {
     const { start, end } = getJSTCalendarMonthRange(year, month);
 
     // カレンダーイベントを取得
     const events = await getCalendarEvents(calendarId, start, end);
+    const calendarEventIds = new Set(
+      events
+        .map(event => event.id)
+        .filter((eventId): eventId is string => !!eventId)
+    );
 
     // タイトルをパースして支出情報を抽出
     const parsedEvents: ParsedExpenseEvent[] = [];
@@ -539,9 +590,18 @@ export async function getMonthlyExpenseEvents(
     }
 
     console.log(`Found ${parsedEvents.length} expense events for ${year}/${month}`);
-    return parsedEvents;
+    return { expenseEvents: parsedEvents, calendarEventIds };
   } catch (error) {
     console.error('Failed to get monthly expense events:', error);
     throw error;
   }
+}
+
+export async function getMonthlyExpenseEvents(
+  calendarId: string,
+  year: number,
+  month: number // 1-12
+): Promise<ParsedExpenseEvent[]> {
+  const { expenseEvents } = await getMonthlyExpenseEventsForSync(calendarId, year, month);
+  return expenseEvents;
 }

@@ -7,7 +7,7 @@ import {
   deleteConversationSession,
   getOrCreateUser,
   saveExpense,
-  updateDiningBalance,
+  adjustDiningBalance,
   deleteExpenseByDateAndAmount,
   getAllUsers,
   updateSettings,
@@ -525,9 +525,7 @@ async function handleAddExpenseConversation(
     // 外食費用かつ現在の月の場合のみ残高を更新
     let newBalance: number | undefined;
     if (category === '外食費用' && isCurrentMonthJST(dateStr)) {
-      const currentBalance = payerUser.diningBalance;
-      newBalance = currentBalance - amount;
-      await updateDiningBalance(payerUser.id, newBalance);
+      newBalance = await adjustDiningBalance(payerUser.id, -amount) ?? undefined;
     }
 
     const message = createRegistrationMessage(
@@ -860,9 +858,7 @@ async function handleDeleteExpenseConversation(
     // 外食費用かつ現在の月の場合のみ残高を戻す
     let newBalance: number | undefined;
     if (deletedExpense.category === '外食費用' && isCurrentMonthJST(dateStr)) {
-      const currentBalance = targetUser.diningBalance;
-      newBalance = currentBalance + deleteAmount;
-      await updateDiningBalance(targetUser.id, newBalance);
+      newBalance = await adjustDiningBalance(targetUser.id, deleteAmount) ?? undefined;
     }
 
     const message = createDeleteMessage(
