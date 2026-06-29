@@ -353,6 +353,7 @@ gcloud scheduler jobs create http kakeibo-daily-schedule-notification \
   --oidc-service-account-email="scheduler-invoker@YOUR_PROJECT_ID.iam.gserviceaccount.com"
 
 # カレンダー同期ジョブ（毎日深夜3時に実行）
+# 未指定時は当月・先月・先々月を同期
 gcloud scheduler jobs create http kakeibo-calendar-sync \
   --location=asia-northeast1 \
   --schedule="0 3 * * *" \
@@ -362,6 +363,13 @@ gcloud scheduler jobs create http kakeibo-calendar-sync \
   --headers="Content-Type=application/json" \
   --message-body='{"type":"calendar-sync"}' \
   --oidc-service-account-email="scheduler-invoker@YOUR_PROJECT_ID.iam.gserviceaccount.com"
+
+# 過去月を手動で同期する場合（例: 2026年5月）
+curl -X POST \
+  "https://asia-northeast1-YOUR_PROJECT_ID.cloudfunctions.net/calendarSync" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"calendar-sync","year":2026,"month":5}'
 
 # サブスク自動登録ジョブ（毎月1日9時に実行）
 gcloud scheduler jobs create http kakeibo-monthly-subscriptions \

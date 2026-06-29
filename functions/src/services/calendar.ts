@@ -1,6 +1,13 @@
 import { google, calendar_v3 } from 'googleapis';
 import { CalendarEventParams, Category } from '../types/index.js';
 import { getAllUsers } from './firestore.js';
+import {
+  addDaysToDateString,
+  formatDateInJST,
+  formatTimeInJST,
+  getJSTCalendarDayRange,
+  getJSTCalendarMonthRange,
+} from '../utils/date.js';
 
 /**
  * Google Calendar APIクライアント
@@ -53,6 +60,48 @@ export async function getScheduleColorForUser(userName: string): Promise<string>
   return '8'; // グラファイト（1番目のユーザーまたはデフォルト）
 }
 
+function createJSTDateTime(date: string, time: string): string {
+  return `${date}T${time}:00+09:00`;
+}
+
+function getMinutesFromTime(time: string): number {
+  const [hours, minutes] = time.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+function getEndDateForTimeRange(date: string, startTime: string, endTime: string): string {
+  return getMinutesFromTime(endTime) <= getMinutesFromTime(startTime)
+    ? addDaysToDateString(date, 1)
+    : date;
+}
+
+function createOneHourLaterJSTDateTime(date: string, startTime: string): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const [hours, minutes] = startTime.split(':').map(Number);
+  const startUtcMillis = Date.UTC(year, month - 1, day, hours - 9, minutes, 0, 0);
+  const endDate = new Date(startUtcMillis + 60 * 60 * 1000);
+
+  return `${formatDateInJST(endDate)}T${formatTimeInJST(endDate)}:00+09:00`;
+}
+
+function formatScheduleTimeLabel(event: calendar_v3.Schema$Event): string {
+  if (event.start?.date) {
+    return '終日';
+  }
+
+  if (!event.start?.dateTime) {
+    return '時間不明';
+  }
+
+  const startTime = formatTimeInJST(new Date(event.start.dateTime));
+  if (!event.end?.dateTime) {
+    return startTime;
+  }
+
+  const endTime = formatTimeInJST(new Date(event.end.dateTime));
+  return startTime === endTime ? startTime : `${startTime} 〜 ${endTime}`;
+}
+
 /**
  * カレンダーイベントを作成
  */
@@ -90,7 +139,7 @@ export async function createCalendarEvent(
         date: params.date,
       },
       end: {
-        date: params.date,
+        date: addDaysToDateString(params.date, 1),
       },
       colorId: params.colorId,
     };
@@ -172,16 +221,9 @@ export async function createScheduleEvent(
 
     if (startTime) {
       const startDateTime = `${date}T${startTime}:00+09:00`;
-      let endDateTime: string;
-
-      if (endTime) {
-        endDateTime = `${date}T${endTime}:00+09:00`;
-      } else {
-        // 開始時間のみ指定の場合は1時間後を終了時間とする
-        const startDate = new Date(startDateTime);
-        const endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
-        endDateTime = endDate.toISOString().replace(/\.\d{3}Z$/, '+09:00');
-      }
+      const endDateTime = endTime
+        ? createJSTDateTime(getEndDateForTimeRange(date, startTime, endTime), endTime)
+        : createOneHourLaterJSTDateTime(date, startTime);
 
       event = {
         summary,
@@ -196,7 +238,7 @@ export async function createScheduleEvent(
         summary,
         description,
         start: { date },
-        end: { date },
+        end: { date: addDaysToDateString(date, 1) },
         colorId,
       };
     }
@@ -243,6 +285,7 @@ export async function getCalendarEvents(
       timeMax: endDate.toISOString(),
       singleEvents: true,
       orderBy: 'startTime',
+      timeZone: 'Asia/Tokyo',
     });
 
     return response.data.items || [];
@@ -258,13 +301,11 @@ export async function getCalendarEvents(
 export async function getTodaySchedules(
   calendarId: string,
   date: Date
-): Promise<Array<{ userName: string; content: string }>> {
+): Promise<Array<{ userName: string; content: string; timeLabel: string }>> {
   try {
-    // UTC基準で1日の範囲を設定
-    const startOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
-    const endOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
+    const { start, end } = getJSTCalendarDayRange(date);
 
-    const events = await getCalendarEvents(calendarId, startOfDay, endOfDay);
+    const events = await getCalendarEvents(calendarId, start, end);
 
     // 予定（colorId: 7, 8, 10）または タイトルに「予定」を含むイベントをフィルター
     const scheduleColorIds = ['7', '8', '10'];
@@ -283,6 +324,7 @@ export async function getTodaySchedules(
           return {
             userName: tantoMatch[1].trim(),
             content: summary.trim(),
+            timeLabel: formatScheduleTimeLabel(event),
           };
         }
 
@@ -292,6 +334,7 @@ export async function getTodaySchedules(
           return {
             userName: match[1].trim(),
             content: match[2].trim(),
+            timeLabel: formatScheduleTimeLabel(event),
           };
         }
 
@@ -299,6 +342,7 @@ export async function getTodaySchedules(
         return {
           userName: event.creator?.displayName || event.creator?.email?.split('@')[0] || '不明',
           content: summary,
+          timeLabel: formatScheduleTimeLabel(event),
         };
       });
 
@@ -451,7 +495,7 @@ export function parseExpenseEventTitle(
       dateStr = event.start.date;
     } else if (event.start?.dateTime) {
       // 時刻指定イベント
-      dateStr = new Date(event.start.dateTime).toISOString().split('T')[0];
+      dateStr = formatDateInJST(new Date(event.start.dateTime));
     } else {
       console.warn(`No date found in event: ${summary}`);
       return null;
@@ -472,7 +516,7 @@ export function parseExpenseEventTitle(
 }
 
 /**
- * 当月の支出イベントを取得（外食費用・買い物費用・旅行費用）
+ * 対象月の支出イベントを取得（外食費用・買い物費用・旅行費用）
  */
 export async function getMonthlyExpenseEvents(
   calendarId: string,
@@ -480,12 +524,10 @@ export async function getMonthlyExpenseEvents(
   month: number // 1-12
 ): Promise<ParsedExpenseEvent[]> {
   try {
-    // 当月の開始日・終了日を計算（TZ=Asia/Tokyo 環境でJST基準）
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+    const { start, end } = getJSTCalendarMonthRange(year, month);
 
     // カレンダーイベントを取得
-    const events = await getCalendarEvents(calendarId, startDate, endDate);
+    const events = await getCalendarEvents(calendarId, start, end);
 
     // タイトルをパースして支出情報を抽出
     const parsedEvents: ParsedExpenseEvent[] = [];
