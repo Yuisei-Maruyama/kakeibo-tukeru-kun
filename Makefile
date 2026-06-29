@@ -108,11 +108,23 @@ install: ## 依存関係をインストール
 	@cd functions && npm install
 	@echo "✅ インストール完了"
 
+.PHONY: liff-install
+liff-install: ## LIFFアプリの依存関係をpnpmでインストール
+	@cd liff-app && pnpm install
+
 .PHONY: build
 build: ## TypeScriptをビルド
 	@echo "🔨 ビルド中..."
 	@cd functions && npm run build
 	@echo "✅ ビルド完了"
+
+.PHONY: liff-typecheck
+liff-typecheck: ## LIFFアプリの型チェック
+	@cd liff-app && pnpm typecheck
+
+.PHONY: liff-build
+liff-build: ## LIFFアプリをビルド
+	@cd liff-app && pnpm build
 
 .PHONY: dev
 dev: ## ローカル開発サーバーを起動

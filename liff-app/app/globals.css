@@ -1,0 +1,106 @@
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+@theme inline {
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-ledger-ink: #123D35;
+  --color-ledger-green: #0F766E;
+  --color-ledger-mint: #DDF7EC;
+  --color-ledger-paper: #F8FAF6;
+  --color-ledger-coin: #B7791F;
+  --color-ledger-coral: #B42318;
+  --color-ledger-blue: #006CA8;
+  --shadow-ledger: 0 18px 50px rgba(18, 61, 53, 0.10);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+:root {
+  --background: 116 31% 97%;
+  --foreground: 168 54% 16%;
+  --card: 0 0% 100%;
+  --card-foreground: 168 54% 16%;
+  --primary: 175 77% 26%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 44 78% 90%;
+  --secondary-foreground: 168 54% 16%;
+  --muted: 150 25% 93%;
+  --muted-foreground: 165 14% 34%;
+  --accent: 203 100% 33%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 4 70% 40%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 156 24% 82%;
+  --input: 156 24% 82%;
+  --ring: 203 100% 33%;
+  --radius: 0.5rem;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html {
+  min-width: 320px;
+}
+
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.ledger-grid {
+  background-image:
+    linear-gradient(rgba(15, 118, 110, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 118, 110, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.content-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 420px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

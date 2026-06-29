@@ -23,6 +23,7 @@ A LINE Bot-based household expense management system integrated with Google Cale
 | **家賃自動登録** | 毎月1日に家賃を月末日付でカレンダーに自動登録 |
 | **テキストコマンド** | `@追加`, `@残高`, `@レポート` など 20 以上のコマンド対応 |
 | **対話形式入力** | ステップバイステップの対話で支出・予定を登録 |
+| **LIFF アプリ** | Next.js + Shadcn UI で画像追加・手動追加・更新・削除・履歴・予定・設定をフォーム操作 |
 
 ---
 
@@ -82,6 +83,11 @@ kakeibo-tukeru-kun/
 │   │   └── utils/                # ユーティリティ
 │   ├── package.json
 │   └── tsconfig.json
+├── liff-app/
+│   ├── app/                      # Next.js App Router
+│   ├── components/               # Shadcn UI / LIFF UI
+│   ├── lib/                      # LIFF / command utilities
+│   └── package.json              # pnpm 管理
 ├── scripts/
 │   ├── setup.sh                  # GCP 初期設定スクリプト
 │   └── deploy.sh                 # デプロイスクリプト
@@ -91,7 +97,8 @@ kakeibo-tukeru-kun/
 │   ├── 03_api_specification.md   # API 仕様書
 │   ├── 04_setup_guide.md         # セットアップガイド
 │   ├── 05_cost_management.md     # コスト管理
-│   └── 06_makefile_reference.md  # Makefile リファレンス
+│   ├── 06_makefile_reference.md  # Makefile リファレンス
+│   └── 07_liff_app.md            # LIFF アプリ仕様
 └── Makefile                      # ビルド・デプロイコマンド
 ```
 
@@ -229,6 +236,7 @@ make pause-scheduler   # スケジューラー一時停止
 | [セットアップガイド](docs/04_setup_guide.md) | 環境構築手順 |
 | [コスト管理](docs/05_cost_management.md) | GCP 無料枠・課金管理 |
 | [Makefile リファレンス](docs/06_makefile_reference.md) | Make コマンド一覧 |
+| [LIFF アプリ仕様](docs/07_liff_app.md) | Next.js LIFF アプリ・Firestore/Calendar 表示 |
 
 ---
 
