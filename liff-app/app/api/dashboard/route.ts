@@ -254,7 +254,9 @@ async function authorizeUser(request: NextRequest) {
 
   const userDoc = await db.collection("users").doc(verification.sub).get();
   if (!userDoc.exists) {
-    throw new Error("家計ぼっとに登録済みの LINE ユーザーではありません");
+    throw new Error(
+      "家計ぼっとに登録済みの LINE ユーザーではありません。同じプロバイダーの LINEログインチャネルを使ってください",
+    );
   }
 
   const user = userDoc.data() as FirestoreUser;

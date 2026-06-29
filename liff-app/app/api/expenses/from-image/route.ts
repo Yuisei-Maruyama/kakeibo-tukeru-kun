@@ -144,7 +144,9 @@ async function verifyLineUser(request: NextRequest): Promise<FirestoreUser> {
   const verified = (await response.json()) as { sub: string };
   const userDoc = await db.collection("users").doc(verified.sub).get();
   if (!userDoc.exists) {
-    throw new Error("家計ぼっとに登録済みの LINE ユーザーではありません");
+    throw new Error(
+      "家計ぼっとに登録済みの LINE ユーザーではありません。同じプロバイダーの LINEログインチャネルを使ってください",
+    );
   }
 
   const user = { id: userDoc.id, ...userDoc.data() } as FirestoreUser;

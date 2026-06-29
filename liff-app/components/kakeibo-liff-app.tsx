@@ -675,7 +675,10 @@ export function KakeiboLiffApp() {
                     <CardDescription>レシート・支払い画面</CardDescription>
                   </CardHeader>
                   <CardContent className="flex flex-col gap-4">
-                    <div className="flex min-h-52 min-w-0 flex-col items-center justify-center gap-3 overflow-hidden rounded-lg border border-dashed border-primary/50 bg-ledger-mint/45 p-4 text-center">
+                    <label
+                      htmlFor="receipt-image"
+                      className="flex min-h-52 min-w-0 cursor-pointer flex-col items-center justify-center gap-3 overflow-hidden rounded-lg border border-dashed border-primary/50 bg-ledger-mint/45 p-4 text-center transition-colors hover:bg-ledger-mint/60 active:bg-ledger-mint/70"
+                    >
                       {receiptImageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -689,44 +692,20 @@ export function KakeiboLiffApp() {
                           <span className="font-semibold">写真を追加</span>
                         </>
                       )}
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <Button variant="outline" asChild>
-                        <label htmlFor="receipt-camera">
-                          <Camera aria-hidden="true" />
-                          撮影
-                        </label>
-                      </Button>
-                      <Input
-                        id="receipt-camera"
-                        className="sr-only"
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        onChange={(event) => {
-                          selectReceiptFile(event.target.files?.[0]);
-                          event.currentTarget.value = "";
-                        }}
-                      />
-
-                      <Button variant="outline" asChild>
-                        <label htmlFor="receipt-library">
-                          <ImagePlus aria-hidden="true" />
-                          写真から選択
-                        </label>
-                      </Button>
-                      <Input
-                        id="receipt-library"
-                        className="sr-only"
-                        type="file"
-                        accept="image/*"
-                        onChange={(event) => {
-                          selectReceiptFile(event.target.files?.[0]);
-                          event.currentTarget.value = "";
-                        }}
-                      />
-                    </div>
+                      <span className="text-xs font-semibold text-muted-foreground">
+                        写真ライブラリ・カメラ・ファイルから選択
+                      </span>
+                    </label>
+                    <Input
+                      id="receipt-image"
+                      className="sr-only"
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => {
+                        selectReceiptFile(event.target.files?.[0]);
+                        event.currentTarget.value = "";
+                      }}
+                    />
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       <Button

@@ -65,8 +65,7 @@ export async function initializeLiff(): Promise<LiffSession> {
             pictureUrl: profile.pictureUrl,
           }
         : null,
-      canSendMessages:
-        liff.isInClient() && liff.isApiAvailable("sendMessages"),
+      canSendMessages: liff.isInClient(),
     };
   } catch (error) {
     return {
@@ -79,7 +78,7 @@ export async function initializeLiff(): Promise<LiffSession> {
 }
 
 export async function sendLineTextMessages(texts: string[]) {
-  if (!liffInstance?.isInClient() || !liffInstance.isApiAvailable("sendMessages")) {
+  if (!liffInstance?.isInClient()) {
     throw new Error("LINE トークへ直接送信できません");
   }
 

@@ -40,7 +40,7 @@ LIFF 側は支出・予定・設定の正本を既存 bot と同じ Firestore / 
 
 LIFF の「追加」画面は、画像追加と手動追加をタブで切り替える。
 
-- 画像タブ: 「撮影」と「写真から選択」を分ける。iOS/LINE 内ブラウザでカメラロールを選べるよう、写真選択側には `capture` を付けない。
+- 画像タブ: 「写真を追加」領域から 1 つの `input type="file" accept="image/*"` を開く。`capture` は付けず、iOS/LINE 内ブラウザ側の「写真ライブラリ」「写真を撮る」「ファイルを選択」をそのまま利用する。
 - 手動タブ: `内容` と `メモ（任意）` を分ける。`内容` は従来の `storeName` 相当として Firestore / Calendar に保存し、`メモ` は Calendar 説明欄と Firestore `expenses.memo` に保存する。
 
 手動追加から送信するコマンド:
@@ -69,6 +69,8 @@ LIFF の「追加」画面は、画像追加と手動追加をタブで切り替
 - Google Calendar の指定月イベント
 
 LIFF クライアントは LINE ID token を `Authorization: Bearer <idToken>` として送る。API Route は LINE の token verify API で検証し、Firestore `users/{LINE_USER_ID}` に存在する有効ユーザーだけに表示する。
+
+既存 bot が Messaging API で作成した `users/{LINE_USER_ID}` と照合するため、LIFF を追加する LINEログインチャネルは、既存 bot の Messaging API チャネルと同じ LINE Developers プロバイダー内に作成する。別プロバイダーの LINEログインチャネルを使うと LINE userId が一致せず、「家計ぼっとに登録済みの LINE ユーザーではありません」になる。
 
 ローカル確認時だけ `LIFF_DASHBOARD_AUTH_DISABLED=true` で認証をスキップできる。本番では使用しない。
 
@@ -117,16 +119,17 @@ Firestore / Google Calendar 取得には、Next.js 実行環境から Google App
 
 ## LINE Developers 側の設定
 
-1. LINE Developers コンソールで LINEログインチャネルを作成または選択する。
-2. `LIFF` タブで LIFF アプリを追加する。
-3. エンドポイントURLにデプロイ後の LIFF アプリ URL を設定する。
-4. サイズはスマートフォン前提で `Full` を選択する。
-5. Scope は少なくとも `openid`、`profile`、`chat_message.write` を選択する。
+1. LINE Developers コンソールで、既存 bot の Messaging API チャネルがあるプロバイダーを開く。
+2. その同じプロバイダー内で LINEログインチャネルを作成または選択する。
+3. `LIFF` タブで LIFF アプリを追加する。
+4. エンドポイントURLにデプロイ後の LIFF アプリ URL を設定する。
+5. サイズはスマートフォン前提で `Full` を選択する。
+6. Scope は少なくとも `openid`、`profile`、`chat_message.write` を選択する。
    - `openid`: `liff.getIDToken()` で API 認証するために必要
    - `profile`: `liff.getProfile()` で表示名を出すために必要
    - `chat_message.write`: `liff.sendMessages()` で既存 bot コマンドを LINE トークへ送るために必要
-6. 友だち追加オプションは `On (Normal)` を推奨する。
-7. Scan QR はこのアプリでは使用しないため `Off` にする。
+7. 友だち追加オプションは `On (Normal)` を推奨する。
+8. Scan QR はこのアプリでは使用しないため `Off` にする。
 
 ## Google Cloud 側の設定
 
