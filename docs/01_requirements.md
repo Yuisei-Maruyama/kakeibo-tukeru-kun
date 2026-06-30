@@ -1211,6 +1211,70 @@ Bot: ⚠️ 家賃情報が登録されていません
 
 ---
 
+### 2.4.3 LIFF 受領完了ノート
+
+**概要:**
+LIFF アプリのヘッダーから「受領完了ノート」を開き、月間の貯金・精算に対する受領確認を画面内で管理できる機能。
+
+**表示カテゴリー:**
+| カテゴリー | 内容 |
+|------------|------|
+| すべて | すべての受領確認を一覧表示 |
+| 外食貯金 | 外食費用の残高を貯金額としてユーザー別に表示 |
+| 買い物費用精算 | 買い物費用の精算対象額をユーザー別に表示 |
+| 旅行費用精算 | 旅行費用の精算対象額をユーザー別に表示 |
+
+**入力・確認項目:**
+- 各カテゴリーで、ユーザーごとの設定額を入力・調整できる
+- 各ユーザー行ごとに「受領完了」チェックを入れられる
+- ユーザー側でカテゴリー、対象ユーザー、金額を選択して明細を追加できる
+- 既存明細のカテゴリー、対象ユーザー、金額、受領完了チェックを更新できる
+- 不要になった既存明細を削除できる
+- カテゴリーごとに、もう片方のユーザーが確認者として確認日を選択できる
+- カテゴリーごとに「全体確認」チェックを入れられる
+
+**初期表示:**
+- 外食貯金は、取得済みユーザーの外食残高を初期金額にする
+- 買い物費用精算・旅行費用精算は、表示月の支出履歴をユーザー別に集計した金額を初期金額にする
+- 実データ未取得時は、既存のプレビュー支出を使って表示する
+
+**注意事項:**
+- 受領ノートの明細と全体確認状態は Firestore に永続保存する
+
+**Firestore データモデル:**
+
+`receiptNotes` コレクション:
+- `groupId`: LINE グループ ID
+- `month`: 対象月（`YYYY-MM`）
+- `category`: `diningSaving` / `shoppingSettlement` / `travelSettlement`
+- `userId`: 対象ユーザー ID
+- `userName`: 対象ユーザー表示名
+- `amount`: 設定額
+- `received`: 受領完了チェック
+- `source`: `manual` / `summary`
+- `isActive`: 削除済み判定
+- `createdAt`: 作成日時
+- `updatedAt`: 更新日時
+
+`receiptNoteConfirmations` コレクション:
+- `groupId`: LINE グループ ID
+- `month`: 対象月（`YYYY-MM`）
+- `category`: `diningSaving` / `shoppingSettlement` / `travelSettlement`
+- `confirmedByUserId`: 確認者ユーザー ID
+- `confirmedBy`: 確認者表示名
+- `date`: 確認日
+- `checked`: 全体確認チェック
+- `updatedAt`: 更新日時
+
+**LIFF API:**
+- `POST /api/receipt-notes`: 明細を追加
+- `PATCH /api/receipt-notes/{id}`: 明細のカテゴリー、対象ユーザー、金額、受領完了チェックを更新
+- `DELETE /api/receipt-notes/{id}`: 明細を論理削除
+- `PUT /api/receipt-notes/confirmations`: カテゴリーごとの確認者、確認日、全体確認チェックを保存
+- `GET /api/dashboard`: 対象月の受領ノート明細と確認状態を返す
+
+---
+
 ### 2.5 サブスク（定期支払い）自動登録機能
 
 | 項目 | 内容 |

@@ -47,6 +47,33 @@ export type DashboardRent = {
   amount: number;
 } | null;
 
+export type ReceiptNoteCategory =
+  | "diningSaving"
+  | "shoppingSettlement"
+  | "travelSettlement";
+
+export type DashboardReceiptNote = {
+  id: string;
+  month: string;
+  category: ReceiptNoteCategory;
+  userId: string;
+  userName: string;
+  amount: number;
+  received: boolean;
+  source: "manual" | "summary";
+  isActive: boolean;
+};
+
+export type DashboardReceiptNoteConfirmation = {
+  id: string;
+  month: string;
+  category: ReceiptNoteCategory;
+  confirmedByUserId: string;
+  confirmedBy: string;
+  date: string;
+  checked: boolean;
+};
+
 export type DashboardSettings = {
   monthlyBudget: number;
   lineGroupId: string;
@@ -64,6 +91,8 @@ export type DashboardData = {
   calendarEvents: DashboardCalendarEvent[];
   subscriptions: DashboardSubscription[];
   rent: DashboardRent;
+  receiptNotes: DashboardReceiptNote[];
+  receiptNoteConfirmations: DashboardReceiptNoteConfirmation[];
   settings: DashboardSettings;
   totals: {
     dining: number;
