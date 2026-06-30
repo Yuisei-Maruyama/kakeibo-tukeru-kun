@@ -7,8 +7,11 @@ import type {
   DashboardExpense,
   DashboardExpenseCategory,
   DashboardRent,
+  DashboardReceiptNote,
+  DashboardReceiptNoteConfirmation,
   DashboardSubscription,
   DashboardUser,
+  ReceiptNoteCategory,
 } from "@/types/dashboard";
 
 export type FirestoreUser = {
@@ -85,6 +88,11 @@ const expenseCategories = new Set<ExpenseCategory>([
   "買い物費用",
   "旅行費用",
 ]);
+const receiptNoteCategories = new Set<ReceiptNoteCategory>([
+  "diningSaving",
+  "shoppingSettlement",
+  "travelSettlement",
+]);
 
 export function getFirestore() {
   if (!firestore) {
@@ -136,6 +144,36 @@ export function assertPositiveAmount(value: unknown, label = "金額") {
   }
 
   return Math.round(amount);
+}
+
+export function assertNonNegativeAmount(value: unknown, label = "金額") {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error(`${label}は 0 円以上で入力してください`);
+  }
+
+  return Math.round(amount);
+}
+
+export function assertReceiptNoteCategory(value: unknown) {
+  if (typeof value !== "string" || !receiptNoteCategories.has(value as ReceiptNoteCategory)) {
+    throw new Error("受領ノートのカテゴリーを選択してください");
+  }
+
+  return value as ReceiptNoteCategory;
+}
+
+export function assertYearMonth(value: unknown, label = "対象月") {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}$/.test(value)) {
+    throw new Error(`${label}は YYYY-MM 形式で入力してください`);
+  }
+
+  const [year, month] = value.split("-").map(Number);
+  if (!year || !month || month < 1 || month > 12) {
+    throw new Error(`${label}は実在する年月を入力してください`);
+  }
+
+  return value;
 }
 
 export function dateStringToTimestamp(date: string) {
@@ -357,6 +395,21 @@ export function ensureGroupRentAccess(
   }
 
   throw new Error("この家賃を操作する権限がありません");
+}
+
+export function ensureGroupReceiptNoteAccess(
+  receiptNote: { groupId?: unknown },
+  context: AuthorizedContext,
+) {
+  if (
+    !context.groupId ||
+    typeof receiptNote.groupId !== "string" ||
+    receiptNote.groupId === context.groupId
+  ) {
+    return;
+  }
+
+  throw new Error("この受領ノートを操作する権限がありません");
 }
 
 function getColorId(category: ExpenseCategory | "家賃費用" | "予定") {
@@ -820,6 +873,38 @@ export function mapRentForClient(rent: Record<string, unknown>): DashboardRent {
   return {
     payerName: String(rent.payerName ?? ""),
     amount: Number(rent.amount ?? 0),
+  };
+}
+
+export function mapReceiptNoteForClient(
+  id: string,
+  receiptNote: Record<string, unknown>,
+): DashboardReceiptNote {
+  return {
+    id,
+    month: String(receiptNote.month ?? ""),
+    category: assertReceiptNoteCategory(receiptNote.category),
+    userId: String(receiptNote.userId ?? ""),
+    userName: String(receiptNote.userName ?? ""),
+    amount: Number(receiptNote.amount ?? 0),
+    received: Boolean(receiptNote.received),
+    source: receiptNote.source === "summary" ? "summary" : "manual",
+    isActive: receiptNote.isActive !== false,
+  };
+}
+
+export function mapReceiptNoteConfirmationForClient(
+  id: string,
+  confirmation: Record<string, unknown>,
+): DashboardReceiptNoteConfirmation {
+  return {
+    id,
+    month: String(confirmation.month ?? ""),
+    category: assertReceiptNoteCategory(confirmation.category),
+    confirmedByUserId: String(confirmation.confirmedByUserId ?? ""),
+    confirmedBy: String(confirmation.confirmedBy ?? ""),
+    date: formatTimestampDate(confirmation.date),
+    checked: Boolean(confirmation.checked),
   };
 }
 

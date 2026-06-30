@@ -67,7 +67,12 @@ import {
   formatShortDate,
   todayInputValue,
 } from "@/lib/utils";
-import type { DashboardData } from "@/types/dashboard";
+import type {
+  DashboardData,
+  DashboardReceiptNote,
+  DashboardReceiptNoteConfirmation,
+  ReceiptNoteCategory,
+} from "@/types/dashboard";
 
 type DraftExpense = Omit<Expense, "id">;
 type AppCalendarEvent = DashboardData["calendarEvents"][number];
@@ -79,6 +84,38 @@ type DraftSubscription = Pick<
 type DraftRent = NonNullable<DashboardData["rent"]>;
 type ExpenseCategoryFilter = "all" | ExpenseCategory;
 type ReportMode = "history" | "summary";
+type ReceiptNoteFilter = "all" | ReceiptNoteCategory;
+type ReceiptNoteConfirmation = {
+  confirmedBy: string;
+  date: string;
+  checked: boolean;
+};
+type ReceiptNoteUser = {
+  id: string;
+  name: string;
+};
+type ReceiptNoteRow = {
+  key: string;
+  id?: string;
+  category: ReceiptNoteCategory;
+  user: ReceiptNoteUser;
+  amount: number;
+  received: boolean;
+  isManual: boolean;
+};
+type ReceiptNoteCategorySummary = {
+  value: ReceiptNoteCategory;
+  label: string;
+  description: string;
+  rows: ReceiptNoteRow[];
+  total: number;
+  receivedCount: number;
+};
+type ReceiptNoteDraft = {
+  category: ReceiptNoteCategory;
+  userName: string;
+  amount: number;
+};
 type ApiResponse<T> = {
   status: "ok" | "error";
   message: string;
@@ -87,6 +124,12 @@ type ExpenseMutationResult = {
   expense: Expense;
   diningBalance?: number;
   users: DashboardData["users"];
+};
+type ReceiptNoteMutationResult = {
+  receiptNote: DashboardReceiptNote;
+};
+type ReceiptNoteConfirmationMutationResult = {
+  confirmation: DashboardReceiptNoteConfirmation;
 };
 type CommandTile =
   | { label: string; command: string; icon: React.ElementType; reportMode?: never; action?: never }
@@ -100,6 +143,39 @@ const expenseCategoryFilters: { value: ExpenseCategoryFilter; label: string }[] 
   { value: "外食費用", label: "外食" },
   { value: "買い物費用", label: "買い物" },
   { value: "旅行費用", label: "旅行" },
+];
+
+const receiptNoteCategories: {
+  value: ReceiptNoteCategory;
+  label: string;
+  description: string;
+  expenseCategory?: ExpenseCategory;
+}[] = [
+  {
+    value: "diningSaving",
+    label: "外食貯金",
+    description: "外食残高から算出",
+    expenseCategory: "外食費用",
+  },
+  {
+    value: "shoppingSettlement",
+    label: "買い物費用精算",
+    description: "買い物費用のユーザー別合計",
+    expenseCategory: "買い物費用",
+  },
+  {
+    value: "travelSettlement",
+    label: "旅行費用精算",
+    description: "旅行費用のユーザー別合計",
+    expenseCategory: "旅行費用",
+  },
+];
+
+const receiptNoteFilters: { value: ReceiptNoteFilter; label: string }[] = [
+  { value: "all", label: "すべて" },
+  { value: "diningSaving", label: "外食貯金" },
+  { value: "shoppingSettlement", label: "買い物精算" },
+  { value: "travelSettlement", label: "旅行精算" },
 ];
 
 const initialExpenses: Expense[] = [
@@ -215,6 +291,54 @@ function toReportMonthInput(value: string) {
   return `${year}/${month}`;
 }
 
+function createReceiptNoteConfirmations(
+  date: string,
+): Record<ReceiptNoteCategory, ReceiptNoteConfirmation> {
+  return {
+    diningSaving: { confirmedBy: "", date, checked: false },
+    shoppingSettlement: { confirmedBy: "", date, checked: false },
+    travelSettlement: { confirmedBy: "", date, checked: false },
+  };
+}
+
+function createReceiptNoteConfirmationsFromDashboard(
+  confirmations: DashboardReceiptNoteConfirmation[],
+  fallbackDate: string,
+) {
+  const result = createReceiptNoteConfirmations(fallbackDate);
+
+  for (const confirmation of confirmations) {
+    result[confirmation.category] = {
+      confirmedBy: confirmation.confirmedBy,
+      date: confirmation.date || fallbackDate,
+      checked: confirmation.checked,
+    };
+  }
+
+  return result;
+}
+
+function createReceiptNoteKey(category: ReceiptNoteCategory, userName: string) {
+  return `${category}:${userName}`;
+}
+
+function createReceiptExpenseKey(category: ExpenseCategory, userName: string) {
+  return `${category}:${userName}`;
+}
+
+function addReceiptNoteUser(
+  users: Map<string, ReceiptNoteUser>,
+  id: string,
+  name: string,
+) {
+  const trimmedName = name.trim();
+  if (!trimmedName || users.has(trimmedName)) {
+    return;
+  }
+
+  users.set(trimmedName, { id, name: trimmedName });
+}
+
 async function requestJson<T>(
   path: string,
   init: Omit<RequestInit, "headers"> & { headers?: HeadersInit } = {},
@@ -285,6 +409,34 @@ export function KakeiboLiffApp() {
   const [expenseCategoryFilter, setExpenseCategoryFilter] =
     React.useState<ExpenseCategoryFilter>("all");
   const [expenseDateFilter, setExpenseDateFilter] = React.useState("");
+  const [receiptNoteFilter, setReceiptNoteFilter] =
+    React.useState<ReceiptNoteFilter>("all");
+  const [receiptNoteAmounts, setReceiptNoteAmounts] = React.useState<
+    Record<string, number>
+  >({});
+  const [receiptNoteChecks, setReceiptNoteChecks] = React.useState<
+    Record<string, boolean>
+  >({});
+  const [receiptNoteUserNames, setReceiptNoteUserNames] = React.useState<
+    Record<string, string>
+  >({});
+  const [receiptNoteRowCategories, setReceiptNoteRowCategories] = React.useState<
+    Record<string, ReceiptNoteCategory>
+  >({});
+  const [receiptNoteDeletedKeys, setReceiptNoteDeletedKeys] = React.useState<
+    Record<string, boolean>
+  >({});
+  const [savedReceiptNotes, setSavedReceiptNotes] = React.useState<
+    DashboardReceiptNote[]
+  >([]);
+  const [receiptNoteDraft, setReceiptNoteDraft] = React.useState<ReceiptNoteDraft>({
+    category: "diningSaving",
+    userName: "",
+    amount: 0,
+  });
+  const [receiptNoteConfirmations, setReceiptNoteConfirmations] = React.useState<
+    Record<ReceiptNoteCategory, ReceiptNoteConfirmation>
+  >(() => createReceiptNoteConfirmations(todayInputValue()));
 
   React.useEffect(() => {
     let mounted = true;
@@ -326,6 +478,13 @@ export function KakeiboLiffApp() {
         setSubscriptions(data.subscriptions);
         setRent(data.rent);
         setRentDraft(data.rent ?? defaultRentDraft());
+        setSavedReceiptNotes(data.receiptNotes);
+        setReceiptNoteConfirmations(
+          createReceiptNoteConfirmationsFromDashboard(
+            data.receiptNoteConfirmations,
+            todayInputValue(),
+          ),
+        );
 
         if (data.source === "live") {
           setBudget(data.settings.monthlyBudget);
@@ -417,6 +576,124 @@ export function KakeiboLiffApp() {
   const liveDiningBalance = visibleDashboardUsers.length
     ? visibleDashboardUsers.reduce((sum, user) => sum + user.diningBalance, 0)
     : Math.max(budget - totals.dining, 0);
+  const receiptNoteUsers = React.useMemo(() => {
+    const userMap = new Map<string, ReceiptNoteUser>();
+
+    for (const user of visibleDashboardUsers) {
+      addReceiptNoteUser(userMap, user.id, user.displayName);
+    }
+
+    for (const expense of expenses) {
+      addReceiptNoteUser(userMap, `expense-${expense.payer}`, expense.payer);
+    }
+
+    if (userMap.size === 0) {
+      addReceiptNoteUser(userMap, "preview-self", "@自分");
+      addReceiptNoteUser(userMap, "preview-partner", "@相手");
+    }
+
+    return Array.from(userMap.values()).slice(0, 2);
+  }, [expenses, visibleDashboardUsers]);
+  const receiptNoteSummaries = React.useMemo(() => {
+    const expenseAmountMap = new Map<string, number>();
+    const diningBalanceMap = new Map<string, number>();
+    const rows: ReceiptNoteRow[] = [];
+    const savedReceiptNoteKeys = new Set<string>();
+
+    for (const receiptNote of savedReceiptNotes) {
+      savedReceiptNoteKeys.add(`${receiptNote.category}:${receiptNote.userId}`);
+      savedReceiptNoteKeys.add(`${receiptNote.category}:${receiptNote.userName}`);
+
+      if (!receiptNote.isActive) {
+        continue;
+      }
+
+      rows.push({
+        key: receiptNote.id,
+        id: receiptNote.id,
+        category: receiptNote.category,
+        user: {
+          id: receiptNote.userId,
+          name: receiptNote.userName,
+        },
+        amount: receiptNoteAmounts[receiptNote.id] ?? receiptNote.amount,
+        received: receiptNoteChecks[receiptNote.id] ?? receiptNote.received,
+        isManual: receiptNote.source === "manual",
+      });
+    }
+
+    for (const expense of expenses) {
+      const key = createReceiptExpenseKey(expense.category, expense.payer);
+      expenseAmountMap.set(key, (expenseAmountMap.get(key) ?? 0) + expense.amount);
+    }
+
+    for (const user of visibleDashboardUsers) {
+      diningBalanceMap.set(user.displayName, user.diningBalance);
+    }
+
+    for (const category of receiptNoteCategories) {
+      for (const user of receiptNoteUsers) {
+        const key = createReceiptNoteKey(category.value, user.name);
+        if (
+          receiptNoteDeletedKeys[key] ||
+          savedReceiptNoteKeys.has(`${category.value}:${user.id}`) ||
+          savedReceiptNoteKeys.has(`${category.value}:${user.name}`)
+        ) {
+          continue;
+        }
+
+        const categoryExpenseKey = createReceiptExpenseKey(
+          category.expenseCategory ?? "外食費用",
+          user.name,
+        );
+        const defaultAmount =
+          category.value === "diningSaving"
+            ? Math.max(
+                diningBalanceMap.get(user.name) ??
+                  budget - (expenseAmountMap.get(categoryExpenseKey) ?? 0),
+                0,
+              )
+            : expenseAmountMap.get(categoryExpenseKey) ?? 0;
+        const userName = receiptNoteUserNames[key] ?? user.name;
+
+        rows.push({
+          key,
+          category: receiptNoteRowCategories[key] ?? category.value,
+          user: {
+            id: user.id,
+            name: userName,
+          },
+          amount: receiptNoteAmounts[key] ?? defaultAmount,
+          received: receiptNoteChecks[key] ?? false,
+          isManual: false,
+        });
+      }
+    }
+
+    return receiptNoteCategories.map<ReceiptNoteCategorySummary>((category) => {
+      const categoryRows = rows.filter((row) => row.category === category.value);
+
+      return {
+        value: category.value,
+        label: category.label,
+        description: category.description,
+        rows: categoryRows,
+        total: categoryRows.reduce((sum, row) => sum + row.amount, 0),
+        receivedCount: categoryRows.filter((row) => row.received).length,
+      };
+    });
+  }, [
+    budget,
+    expenses,
+    receiptNoteAmounts,
+    receiptNoteChecks,
+    receiptNoteDeletedKeys,
+    receiptNoteRowCategories,
+    receiptNoteUserNames,
+    receiptNoteUsers,
+    savedReceiptNotes,
+    visibleDashboardUsers,
+  ]);
 
   async function sendCommands(commands: string[], successMessage: string) {
     setIsSending(true);
@@ -893,6 +1170,254 @@ export function KakeiboLiffApp() {
     }
   }
 
+  function applySavedReceiptNote(receiptNote: DashboardReceiptNote) {
+    setSavedReceiptNotes((current) => {
+      const exists = current.some((item) => item.id === receiptNote.id);
+      if (exists) {
+        return current.map((item) =>
+          item.id === receiptNote.id ? receiptNote : item,
+        );
+      }
+
+      return [...current, receiptNote];
+    });
+  }
+
+  async function saveReceiptNoteRow(
+    row: ReceiptNoteRow,
+    patch: Partial<Pick<ReceiptNoteRow, "category" | "amount" | "received">> & {
+      userName?: string;
+      isActive?: boolean;
+    } = {},
+  ) {
+    const payload = {
+      month: dashboardMonth,
+      category: patch.category ?? row.category,
+      userName: patch.userName ?? row.user.name,
+      amount: patch.amount ?? row.amount,
+      received: patch.received ?? row.received,
+      source: row.isManual ? "manual" : "summary",
+      isActive: patch.isActive ?? true,
+    };
+    const result = row.id
+      ? await requestJson<ReceiptNoteMutationResult>(
+          `/api/receipt-notes/${encodeURIComponent(row.id)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          },
+        )
+      : await requestJson<ReceiptNoteMutationResult>("/api/receipt-notes", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+
+    applySavedReceiptNote(result.receiptNote);
+    setToast(result.message);
+    return result.receiptNote;
+  }
+
+  async function addReceiptNoteRow() {
+    const userName =
+      receiptNoteDraft.userName.trim() || receiptNoteUsers[0]?.name || "@自分";
+    if (!userName || !Number.isFinite(receiptNoteDraft.amount)) {
+      setToast("ユーザーと金額を入力してください");
+      return;
+    }
+
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<ReceiptNoteMutationResult>(
+        "/api/receipt-notes",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            month: dashboardMonth,
+            category: receiptNoteDraft.category,
+            userName,
+            amount: receiptNoteDraft.amount,
+            received: false,
+            source: "manual",
+          }),
+        },
+      );
+
+      applySavedReceiptNote(result.receiptNote);
+      setReceiptNoteFilter(receiptNoteDraft.category);
+      setReceiptNoteDraft((current) => ({
+        ...current,
+        amount: 0,
+      }));
+      setToast(result.message);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "受領ノートの保存に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  function draftReceiptNoteAmount(rowKey: string, amount: number) {
+    setReceiptNoteAmounts((current) => ({
+      ...current,
+      [rowKey]: Number.isFinite(amount) ? Math.max(amount, 0) : 0,
+    }));
+  }
+
+  async function updateReceiptNoteAmount(row: ReceiptNoteRow, amount: number) {
+    const nextAmount = Number.isFinite(amount) ? Math.max(amount, 0) : 0;
+    setReceiptNoteAmounts((current) => ({
+      ...current,
+      [row.key]: nextAmount,
+    }));
+    setIsMutating(true);
+
+    try {
+      await saveReceiptNoteRow(row, { amount: nextAmount });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  async function updateReceiptNoteCheck(row: ReceiptNoteRow, checked: boolean) {
+    setReceiptNoteChecks((current) => ({
+      ...current,
+      [row.key]: checked,
+    }));
+    setIsMutating(true);
+
+    try {
+      await saveReceiptNoteRow(row, { received: checked });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  async function updateReceiptNoteRowCategory(
+    row: ReceiptNoteRow,
+    category: ReceiptNoteCategory,
+  ) {
+    setReceiptNoteRowCategories((current) => ({
+      ...current,
+      [row.key]: category,
+    }));
+    setReceiptNoteFilter(category);
+    setIsMutating(true);
+
+    try {
+      await saveReceiptNoteRow(row, { category });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  async function updateReceiptNoteUserName(row: ReceiptNoteRow, userName: string) {
+    setReceiptNoteUserNames((current) => ({
+      ...current,
+      [row.key]: userName,
+    }));
+    setIsMutating(true);
+
+    try {
+      await saveReceiptNoteRow(row, { userName });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  async function deleteReceiptNoteRow(row: ReceiptNoteRow) {
+    setReceiptNoteDeletedKeys((current) => ({
+      ...current,
+      [row.key]: true,
+    }));
+    setIsMutating(true);
+
+    try {
+      if (row.id) {
+        const result = await requestJson<ReceiptNoteMutationResult>(
+          `/api/receipt-notes/${encodeURIComponent(row.id)}`,
+          {
+            method: "DELETE",
+          },
+        );
+        applySavedReceiptNote(result.receiptNote);
+        setToast(result.message);
+        return;
+      }
+
+      const receiptNote = await saveReceiptNoteRow(row, { isActive: false });
+      applySavedReceiptNote(receiptNote);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "受領ノートの削除に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  async function updateReceiptNoteConfirmation(
+    category: ReceiptNoteCategory,
+    patch: Partial<ReceiptNoteConfirmation>,
+  ) {
+    const nextConfirmation = {
+      ...receiptNoteConfirmations[category],
+      ...patch,
+    };
+    const confirmedBy =
+      nextConfirmation.confirmedBy ||
+      receiptNoteUsers[1]?.name ||
+      receiptNoteUsers[0]?.name ||
+      "@自分";
+    setReceiptNoteConfirmations((current) => ({
+      ...current,
+      [category]: {
+        ...nextConfirmation,
+        confirmedBy,
+      },
+    }));
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<ReceiptNoteConfirmationMutationResult>(
+        "/api/receipt-notes/confirmations",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            month: dashboardMonth,
+            category,
+            confirmedBy,
+            date: nextConfirmation.date,
+            checked: nextConfirmation.checked,
+          }),
+        },
+      );
+      setReceiptNoteConfirmations((current) => ({
+        ...current,
+        [result.confirmation.category]: {
+          confirmedBy: result.confirmation.confirmedBy,
+          date: result.confirmation.date,
+          checked: result.confirmation.checked,
+        },
+      }));
+      setToast(result.message);
+    } catch (error) {
+      setToast(
+        error instanceof Error
+          ? error.message
+          : "受領ノートの全体確認保存に失敗しました",
+      );
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
   return (
     <main className="ledger-grid min-h-dvh bg-background px-3 pb-[calc(6.75rem+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)] text-foreground">
       <div className="mx-auto flex w-full max-w-md flex-col gap-4">
@@ -904,12 +1429,22 @@ export function KakeiboLiffApp() {
               </div>
               <div className="min-w-0">
                 <h1 className="truncate text-lg font-black leading-tight tracking-normal">
-                  家計ぼっと
+                  {activeTab === "receiptNote" ? "受領完了ノート" : "家計ぼっと"}
                 </h1>
               </div>
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
+              <Button
+                type="button"
+                variant={activeTab === "receiptNote" ? "secondary" : "outline"}
+                size="icon"
+                className="size-10"
+                aria-label="受領完了ノートを開く"
+                onClick={() => setActiveTab("receiptNote")}
+              >
+                <CheckCircle2 aria-hidden="true" />
+              </Button>
               <Button
                 type="button"
                 variant="outline"
@@ -1747,6 +2282,30 @@ export function KakeiboLiffApp() {
           </TabsContent>
           ) : null}
 
+          {activeTab === "receiptNote" ? (
+          <TabsContent value="receiptNote">
+            <ReceiptNotePage
+              filter={receiptNoteFilter}
+              summaries={receiptNoteSummaries}
+              confirmations={receiptNoteConfirmations}
+              users={receiptNoteUsers}
+              monthLabel={homeMonthLabel}
+              draft={receiptNoteDraft}
+              disabled={isMutating}
+              onFilterChange={setReceiptNoteFilter}
+              onDraftChange={setReceiptNoteDraft}
+              onAddRow={addReceiptNoteRow}
+              onAmountDraftChange={draftReceiptNoteAmount}
+              onAmountChange={updateReceiptNoteAmount}
+              onReceivedChange={updateReceiptNoteCheck}
+              onCategoryChange={updateReceiptNoteRowCategory}
+              onUserChange={updateReceiptNoteUserName}
+              onDeleteRow={deleteReceiptNoteRow}
+              onConfirmationChange={updateReceiptNoteConfirmation}
+            />
+          </TabsContent>
+          ) : null}
+
           <TabsList
             aria-label="主要ナビゲーション"
             className="fixed inset-x-0 bottom-0 z-40 mx-auto grid w-full max-w-md grid-cols-5 gap-1 rounded-none border-t bg-card/95 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 shadow-[0_-18px_40px_rgba(18,61,53,0.14)] backdrop-blur-xl"
@@ -1774,6 +2333,470 @@ function DataLine({ label, value }: { label: string; value: string }) {
       <span className="text-muted-foreground">{label}</span>
       <span className="truncate font-semibold">{value}</span>
     </div>
+  );
+}
+
+function ReceiptNotePage({
+  filter,
+  summaries,
+  confirmations,
+  users,
+  monthLabel,
+  draft,
+  disabled,
+  onFilterChange,
+  onDraftChange,
+  onAddRow,
+  onAmountDraftChange,
+  onAmountChange,
+  onReceivedChange,
+  onCategoryChange,
+  onUserChange,
+  onDeleteRow,
+  onConfirmationChange,
+}: {
+  filter: ReceiptNoteFilter;
+  summaries: ReceiptNoteCategorySummary[];
+  confirmations: Record<ReceiptNoteCategory, ReceiptNoteConfirmation>;
+  users: ReceiptNoteUser[];
+  monthLabel: string;
+  draft: ReceiptNoteDraft;
+  disabled: boolean;
+  onFilterChange: (value: ReceiptNoteFilter) => void;
+  onDraftChange: React.Dispatch<React.SetStateAction<ReceiptNoteDraft>>;
+  onAddRow: () => void;
+  onAmountDraftChange: (rowKey: string, amount: number) => void;
+  onAmountChange: (row: ReceiptNoteRow, amount: number) => void;
+  onReceivedChange: (row: ReceiptNoteRow, checked: boolean) => void;
+  onCategoryChange: (row: ReceiptNoteRow, category: ReceiptNoteCategory) => void;
+  onUserChange: (row: ReceiptNoteRow, userName: string) => void;
+  onDeleteRow: (row: ReceiptNoteRow) => void;
+  onConfirmationChange: (
+    category: ReceiptNoteCategory,
+    patch: Partial<ReceiptNoteConfirmation>,
+  ) => void;
+}) {
+  const visibleSummaries =
+    filter === "all"
+      ? summaries
+      : summaries.filter((summary) => summary.value === filter);
+  const totalAmount = summaries.reduce((sum, summary) => sum + summary.total, 0);
+  const rowCount = summaries.reduce((sum, summary) => sum + summary.rows.length, 0);
+  const receivedCount = summaries.reduce(
+    (sum, summary) => sum + summary.receivedCount,
+    0,
+  );
+  const confirmedCategoryCount = receiptNoteCategories.filter(
+    (category) => confirmations[category.value].checked,
+  ).length;
+
+  return (
+    <div className="grid gap-4">
+      <section className="rounded-lg border bg-card p-4 shadow-ledger">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-muted-foreground">対象月</p>
+            <h2 className="mt-1 truncate text-2xl font-black leading-tight">
+              {monthLabel}
+            </h2>
+          </div>
+          <Badge variant="outline">{confirmedCategoryCount}/3 全体確認</Badge>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <div className="min-w-0 rounded-md border bg-background/70 p-3">
+            <p className="text-xs font-bold text-muted-foreground">設定額</p>
+            <p className="mt-1 truncate text-lg font-black">
+              {formatCurrency(totalAmount)}
+            </p>
+          </div>
+          <div className="min-w-0 rounded-md border bg-background/70 p-3">
+            <p className="text-xs font-bold text-muted-foreground">受領</p>
+            <p className="mt-1 truncate text-lg font-black">
+              {receivedCount}/{rowCount}
+            </p>
+          </div>
+          <div className="min-w-0 rounded-md border bg-background/70 p-3">
+            <p className="text-xs font-bold text-muted-foreground">確認者</p>
+            <p className="mt-1 truncate text-lg font-black">
+              {users.length ? `${users.length}人` : "未取得"}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>明細を追加</CardTitle>
+          <CardDescription>カテゴリー・ユーザー・金額</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="カテゴリー" htmlFor="receipt-note-add-category">
+              <ReceiptNoteCategorySelect
+                id="receipt-note-add-category"
+                value={draft.category}
+                disabled={disabled}
+                onChange={(category) =>
+                  onDraftChange((current) => ({ ...current, category }))
+                }
+              />
+            </Field>
+            <Field label="ユーザー" htmlFor="receipt-note-add-user">
+              <ReceiptNoteUserSelect
+                id="receipt-note-add-user"
+                users={users}
+                value={draft.userName || users[0]?.name || ""}
+                disabled={disabled}
+                onChange={(userName) =>
+                  onDraftChange((current) => ({ ...current, userName }))
+                }
+              />
+            </Field>
+            <Field label="金額" htmlFor="receipt-note-add-amount">
+              <Input
+                id="receipt-note-add-amount"
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={draft.amount}
+                disabled={disabled}
+                onChange={(event) =>
+                  onDraftChange((current) => ({
+                    ...current,
+                    amount: Number(event.target.value),
+                  }))
+                }
+              />
+            </Field>
+          </div>
+          <Button type="button" disabled={disabled} onClick={onAddRow}>
+            <Plus aria-hidden="true" />
+            追加
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Tabs
+        value={filter}
+        onValueChange={(value) => onFilterChange(value as ReceiptNoteFilter)}
+        className="grid gap-4"
+      >
+        <TabsList aria-label="受領完了ノートのカテゴリー" className="grid w-full grid-cols-4">
+          {receiptNoteFilters.map((item) => (
+            <TabsTrigger
+              key={item.value}
+              value={item.value}
+              className="px-1 text-[0.68rem] sm:text-xs"
+            >
+              {item.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value={filter} className="mt-0 grid gap-4">
+          {visibleSummaries.map((summary) => (
+            <ReceiptNoteCategoryCard
+              key={summary.value}
+              summary={summary}
+              confirmation={confirmations[summary.value]}
+              users={users}
+              disabled={disabled}
+              onAmountDraftChange={onAmountDraftChange}
+              onAmountChange={onAmountChange}
+              onReceivedChange={onReceivedChange}
+              onCategoryChange={onCategoryChange}
+              onUserChange={onUserChange}
+              onDeleteRow={onDeleteRow}
+              onConfirmationChange={onConfirmationChange}
+            />
+          ))}
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function ReceiptNoteCategorySelect({
+  id,
+  value,
+  disabled = false,
+  onChange,
+}: {
+  id: string;
+  value: ReceiptNoteCategory;
+  disabled?: boolean;
+  onChange: (value: ReceiptNoteCategory) => void;
+}) {
+  return (
+    <select
+      id={id}
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value as ReceiptNoteCategory)}
+      className="h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+    >
+      {receiptNoteCategories.map((category) => (
+        <option key={category.value} value={category.value}>
+          {category.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function ReceiptNoteUserSelect({
+  id,
+  users,
+  value,
+  disabled = false,
+  onChange,
+}: {
+  id: string;
+  users: ReceiptNoteUser[];
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <select
+      id={id}
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+      className="h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+    >
+      {users.length ? (
+        users.map((user) => (
+          <option key={user.id} value={user.name}>
+            {user.name}
+          </option>
+        ))
+      ) : (
+        <option value="">未取得</option>
+      )}
+    </select>
+  );
+}
+
+function ReceiptNoteCategoryCard({
+  summary,
+  confirmation,
+  users,
+  disabled,
+  onAmountDraftChange,
+  onAmountChange,
+  onReceivedChange,
+  onCategoryChange,
+  onUserChange,
+  onDeleteRow,
+  onConfirmationChange,
+}: {
+  summary: ReceiptNoteCategorySummary;
+  confirmation: ReceiptNoteConfirmation;
+  users: ReceiptNoteUser[];
+  disabled: boolean;
+  onAmountDraftChange: (rowKey: string, amount: number) => void;
+  onAmountChange: (row: ReceiptNoteRow, amount: number) => void;
+  onReceivedChange: (row: ReceiptNoteRow, checked: boolean) => void;
+  onCategoryChange: (row: ReceiptNoteRow, category: ReceiptNoteCategory) => void;
+  onUserChange: (row: ReceiptNoteRow, userName: string) => void;
+  onDeleteRow: (row: ReceiptNoteRow) => void;
+  onConfirmationChange: (
+    category: ReceiptNoteCategory,
+    patch: Partial<ReceiptNoteConfirmation>,
+  ) => void;
+}) {
+  const confirmedBy =
+    users.find((user) => user.name === confirmation.confirmedBy)?.name ??
+    users[1]?.name ??
+    users[0]?.name ??
+    "";
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle>{summary.label}</CardTitle>
+            <CardDescription>{summary.description}</CardDescription>
+          </div>
+          <Badge
+            variant={
+              summary.rows.length > 0 && summary.receivedCount === summary.rows.length
+                ? "default"
+                : "outline"
+            }
+          >
+            {formatCurrency(summary.total)}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <fieldset className="grid gap-3">
+          <legend className="sr-only">{summary.label}の受領明細</legend>
+          {summary.rows.map((row, index) => (
+            <div
+              key={row.key}
+              className="grid gap-3 rounded-md border bg-background/70 p-3"
+            >
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <UserRound className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                  <span className="truncate font-semibold">{row.user.name}</span>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Badge variant={row.isManual ? "outline" : "secondary"}>
+                    {row.isManual ? "追加" : "集計"}
+                  </Badge>
+                  <Badge variant={row.received ? "default" : "secondary"}>
+                    {row.received ? "受領完了" : "未確認"}
+                  </Badge>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Field
+                  label="カテゴリー"
+                  htmlFor={`${summary.value}-${index}-receipt-category`}
+                >
+                  <ReceiptNoteCategorySelect
+                    id={`${summary.value}-${index}-receipt-category`}
+                    value={row.category}
+                    disabled={disabled}
+                    onChange={(category) => onCategoryChange(row, category)}
+                  />
+                </Field>
+                <Field
+                  label="ユーザー"
+                  htmlFor={`${summary.value}-${index}-receipt-user`}
+                >
+                  <ReceiptNoteUserSelect
+                    id={`${summary.value}-${index}-receipt-user`}
+                    users={users}
+                    value={row.user.name}
+                    disabled={disabled}
+                    onChange={(userName) => onUserChange(row, userName)}
+                  />
+                </Field>
+                <Field
+                  label="設定額"
+                  htmlFor={`${summary.value}-${index}-receipt-amount`}
+                >
+                  <Input
+                    id={`${summary.value}-${index}-receipt-amount`}
+                    name={`${summary.value}-${index}-receipt-amount`}
+                    type="number"
+                    min={0}
+                    inputMode="numeric"
+                    value={row.amount}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onAmountDraftChange(row.key, Number(event.target.value))
+                    }
+                    onBlur={(event) =>
+                      onAmountChange(row, Number(event.target.value))
+                    }
+                  />
+                </Field>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                <label className="flex min-h-12 items-center gap-3 rounded-md border bg-card/70 px-3 py-2 text-sm font-semibold">
+                  <input
+                    name={`${summary.value}-${index}-received`}
+                    type="checkbox"
+                    checked={row.received}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onReceivedChange(row, event.target.checked)
+                    }
+                    className="size-5 shrink-0"
+                  />
+                  <span>受領完了</span>
+                </label>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="sm:w-28"
+                  disabled={disabled}
+                  onClick={() => onDeleteRow(row)}
+                >
+                  <Trash2 aria-hidden="true" />
+                  削除
+                </Button>
+              </div>
+            </div>
+          ))}
+          {summary.rows.length === 0 ? (
+            <div className="rounded-md border bg-background/70 p-4 text-sm text-muted-foreground">
+              このカテゴリーの明細はありません
+            </div>
+          ) : null}
+        </fieldset>
+
+        <fieldset className="grid gap-3 rounded-md border bg-background/70 p-3">
+          <legend className="sr-only">{summary.label}の全体確認</legend>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="確認者" htmlFor={`${summary.value}-confirmed-by`}>
+              <select
+                id={`${summary.value}-confirmed-by`}
+                name={`${summary.value}-confirmed-by`}
+                value={confirmedBy}
+                disabled={disabled}
+                onChange={(event) =>
+                  onConfirmationChange(summary.value, {
+                    confirmedBy: event.target.value,
+                  })
+                }
+                className="h-12 w-full min-w-0 rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+              >
+                {users.length ? (
+                  users.map((user) => (
+                    <option key={user.id} value={user.name}>
+                      {user.name}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">未取得</option>
+                )}
+              </select>
+            </Field>
+            <Field label="確認日" htmlFor={`${summary.value}-confirmed-date`}>
+              <Input
+                id={`${summary.value}-confirmed-date`}
+                name={`${summary.value}-confirmed-date`}
+                type="date"
+                value={confirmation.date}
+                disabled={disabled}
+                onChange={(event) =>
+                  onConfirmationChange(summary.value, {
+                    date: event.target.value,
+                  })
+                }
+              />
+            </Field>
+          </div>
+          <label className="flex min-h-12 items-center gap-3 rounded-md border bg-card/70 px-3 py-2 text-sm font-semibold">
+            <input
+              name={`${summary.value}-overall-confirmed`}
+              type="checkbox"
+              checked={confirmation.checked}
+              disabled={disabled}
+              onChange={(event) =>
+                onConfirmationChange(summary.value, {
+                  checked: event.target.checked,
+                  confirmedBy,
+                })
+              }
+              className="size-5 shrink-0"
+            />
+            <span className="min-w-0">
+              <span className="block">全体確認済み</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {confirmedBy ? `${confirmedBy} / ${confirmation.date}` : "確認者未取得"}
+              </span>
+            </span>
+          </label>
+        </fieldset>
+      </CardContent>
+    </Card>
   );
 }
 

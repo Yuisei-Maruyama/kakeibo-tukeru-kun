@@ -8,9 +8,12 @@ import type {
   DashboardExpense,
   DashboardExpenseCategory,
   DashboardRent,
+  DashboardReceiptNote,
+  DashboardReceiptNoteConfirmation,
   DashboardSettings,
   DashboardSubscription,
   DashboardUser,
+  ReceiptNoteCategory,
 } from "@/types/dashboard";
 
 export const runtime = "nodejs";
@@ -39,6 +42,12 @@ type FirestoreSettings = {
   firstHalfPayerId?: string;
   secondHalfPayerId?: string;
 };
+
+const receiptNoteCategories = new Set<ReceiptNoteCategory>([
+  "diningSaving",
+  "shoppingSettlement",
+  "travelSettlement",
+]);
 
 function getFirestore() {
   if (!firestore) {
@@ -69,6 +78,8 @@ function createUnavailable(message: string): DashboardData {
     calendarEvents: [],
     subscriptions: [],
     rent: null,
+    receiptNotes: [],
+    receiptNoteConfirmations: [],
     settings: {
       monthlyBudget: 50000,
       lineGroupId: "",
@@ -202,6 +213,14 @@ function getCalendarEventType(event: calendar_v3.Schema$Event): DashboardCalenda
 function buildIntervalLabel(unit: string, value: number) {
   const unitLabel = unit === "week" ? "週" : "ヶ月";
   return value === 1 ? `毎${unitLabel}` : `${value}${unitLabel}ごと`;
+}
+
+function getReceiptNoteCategory(value: unknown): ReceiptNoteCategory {
+  if (typeof value === "string" && receiptNoteCategories.has(value as ReceiptNoteCategory)) {
+    return value as ReceiptNoteCategory;
+  }
+
+  return "shoppingSettlement";
 }
 
 async function verifyLineToken(request: NextRequest): Promise<LineTokenVerification | null> {
@@ -402,6 +421,58 @@ async function getRent(groupId: string): Promise<DashboardRent> {
   };
 }
 
+async function getReceiptNotes(
+  groupId: string,
+  month: string,
+): Promise<DashboardReceiptNote[]> {
+  const snapshot = await getFirestore()
+    .collection("receiptNotes")
+    .where("month", "==", month)
+    .get();
+
+  return snapshot.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }) as Record<string, unknown>)
+    .filter((receiptNote) => !groupId || receiptNote.groupId === groupId)
+    .map((receiptNote) => ({
+      id: String(receiptNote.id),
+      month: String(receiptNote.month ?? ""),
+      category: getReceiptNoteCategory(receiptNote.category),
+      userId: String(receiptNote.userId ?? ""),
+      userName: String(receiptNote.userName ?? ""),
+      amount: Number(receiptNote.amount ?? 0),
+      received: Boolean(receiptNote.received),
+      source:
+        receiptNote.source === "summary"
+          ? "summary" as const
+          : "manual" as const,
+      isActive: receiptNote.isActive !== false,
+    }))
+    .sort((a, b) => a.category.localeCompare(b.category));
+}
+
+async function getReceiptNoteConfirmations(
+  groupId: string,
+  month: string,
+): Promise<DashboardReceiptNoteConfirmation[]> {
+  const snapshot = await getFirestore()
+    .collection("receiptNoteConfirmations")
+    .where("month", "==", month)
+    .get();
+
+  return snapshot.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }) as Record<string, unknown>)
+    .filter((confirmation) => !groupId || confirmation.groupId === groupId)
+    .map((confirmation) => ({
+      id: String(confirmation.id),
+      month: String(confirmation.month ?? ""),
+      category: getReceiptNoteCategory(confirmation.category),
+      confirmedByUserId: String(confirmation.confirmedByUserId ?? ""),
+      confirmedBy: String(confirmation.confirmedBy ?? ""),
+      date: formatTimestampDate(confirmation.date),
+      checked: Boolean(confirmation.checked),
+    }));
+}
+
 export async function GET(request: NextRequest) {
   try {
     const authorizedUser = await authorizeUser(request);
@@ -410,12 +481,22 @@ export async function GET(request: NextRequest) {
     const settings = await getSettings(users);
     const groupId = authorizedUser.groupId || settings.lineGroupId;
     const groupUserIds = new Set(users.map((user) => user.id));
+    const monthLabel = `${year}-${String(month).padStart(2, "0")}`;
 
-    const [expenses, calendarEvents, subscriptions, rent] = await Promise.all([
+    const [
+      expenses,
+      calendarEvents,
+      subscriptions,
+      rent,
+      receiptNotes,
+      receiptNoteConfirmations,
+    ] = await Promise.all([
       getExpenses(year, month, groupUserIds),
       getCalendarEvents(settings.calendarId, year, month),
       getSubscriptions(groupId),
       getRent(groupId),
+      getReceiptNotes(groupId, monthLabel),
+      getReceiptNoteConfirmations(groupId, monthLabel),
     ]);
 
     const totals = expenses.reduce(
@@ -437,12 +518,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       source: "live",
       message: "Firestore と Google Calendar から取得しました",
-      month: `${year}-${String(month).padStart(2, "0")}`,
+      month: monthLabel,
       users,
       expenses,
       calendarEvents,
       subscriptions,
       rent,
+      receiptNotes,
+      receiptNoteConfirmations,
       settings,
       totals,
     } satisfies DashboardData, {
