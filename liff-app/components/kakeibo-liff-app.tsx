@@ -83,6 +83,11 @@ type ApiResponse<T> = {
   status: "ok" | "error";
   message: string;
 } & T;
+type ExpenseMutationResult = {
+  expense: Expense;
+  diningBalance?: number;
+  users: DashboardData["users"];
+};
 type CommandTile =
   | { label: string; command: string; icon: React.ElementType; reportMode?: never; action?: never }
   | { label: string; reportMode: ReportMode; icon: React.ElementType; command?: never; action?: never }
@@ -254,6 +259,7 @@ export function KakeiboLiffApp() {
   const [isLoadingDashboard, setIsLoadingDashboard] = React.useState(false);
   const [isMutating, setIsMutating] = React.useState(false);
   const [expenses, setExpenses] = React.useState<Expense[]>(initialExpenses);
+  const [dashboardUsers, setDashboardUsers] = React.useState<DashboardData["users"]>([]);
   const [draftExpense, setDraftExpense] = React.useState<DraftExpense>(defaultDraft);
   const [receiptImageUrl, setReceiptImageUrl] = React.useState<string | null>(null);
   const [receiptFile, setReceiptFile] = React.useState<File | null>(null);
@@ -314,6 +320,7 @@ export function KakeiboLiffApp() {
 
       React.startTransition(() => {
         setDashboard(data);
+        setDashboardUsers(data.users);
         setToast(data.message);
         setCalendarEvents(data.calendarEvents);
         setSubscriptions(data.subscriptions);
@@ -403,10 +410,13 @@ export function KakeiboLiffApp() {
 
     return results;
   }, [expenseCategoryFilter, expenseDateFilter, expenses]);
-  const liveDiningBalance =
-    dashboard?.source === "live"
-      ? dashboard.users.reduce((sum, user) => sum + user.diningBalance, 0)
-      : Math.max(budget - totals.dining, 0);
+  const homeMonthLabel = formatYearMonthLabel(dashboard?.month ?? dashboardMonth);
+  const hasLiveDashboardData = dashboard?.source === "live" || dashboardUsers.length > 0;
+  const visibleDashboardUsers =
+    dashboard?.source === "live" ? dashboard.users : dashboardUsers;
+  const liveDiningBalance = visibleDashboardUsers.length
+    ? visibleDashboardUsers.reduce((sum, user) => sum + user.diningBalance, 0)
+    : Math.max(budget - totals.dining, 0);
 
   async function sendCommands(commands: string[], successMessage: string) {
     setIsSending(true);
@@ -504,6 +514,7 @@ export function KakeiboLiffApp() {
       const result = (await response.json()) as {
         status: "ok" | "error";
         message: string;
+        users?: DashboardData["users"];
         expense?: Expense;
       };
 
@@ -513,6 +524,7 @@ export function KakeiboLiffApp() {
 
       React.startTransition(() => {
         setExpenses((current) => [result.expense!, ...current]);
+        setDashboardUsers(result.users ?? dashboardUsers);
         setDashboard(null);
         setReceiptFile(null);
         setReceiptImageUrl(null);
@@ -534,7 +546,7 @@ export function KakeiboLiffApp() {
     setIsMutating(true);
 
     try {
-      const result = await requestJson<{ expense: Expense; diningBalance?: number }>(
+      const result = await requestJson<ExpenseMutationResult>(
         "/api/expenses",
         {
           method: "POST",
@@ -549,6 +561,7 @@ export function KakeiboLiffApp() {
         setExpenses((current) =>
           [result.expense, ...current].sort((a, b) => b.date.localeCompare(a.date)),
         );
+        setDashboardUsers(result.users);
         setDashboard(null);
         setDraftExpense(defaultDraft());
         setReportMode("history");
@@ -566,7 +579,7 @@ export function KakeiboLiffApp() {
     setIsMutating(true);
 
     try {
-      const result = await requestJson<{ expense: Expense; diningBalance?: number }>(
+      const result = await requestJson<ExpenseMutationResult>(
         `/api/expenses/${encodeURIComponent(expense.id)}`,
         {
           method: "DELETE",
@@ -575,6 +588,7 @@ export function KakeiboLiffApp() {
 
       React.startTransition(() => {
         setExpenses((current) => current.filter((item) => item.id !== expense.id));
+        setDashboardUsers(result.users);
         setDashboard(null);
         setToast(result.message);
       });
@@ -589,7 +603,7 @@ export function KakeiboLiffApp() {
     setIsMutating(true);
 
     try {
-      const result = await requestJson<{ expense: Expense; diningBalance?: number }>(
+      const result = await requestJson<ExpenseMutationResult>(
         `/api/expenses/${encodeURIComponent(before.id)}`,
         {
           method: "PATCH",
@@ -606,6 +620,7 @@ export function KakeiboLiffApp() {
             .map((item) => (item.id === before.id ? result.expense : item))
             .sort((a, b) => b.date.localeCompare(a.date)),
         );
+        setDashboardUsers(result.users);
         setDashboard(null);
         setToast(result.message);
       });
@@ -856,6 +871,7 @@ export function KakeiboLiffApp() {
 
       React.startTransition(() => {
         setBudget(result.monthlyBudget);
+        setDashboardUsers(result.users);
         setDashboard((current) =>
           current
             ? {
@@ -952,8 +968,8 @@ export function KakeiboLiffApp() {
                       レシートを撮るだけ
                     </h2>
                   </div>
-                  <Badge variant={dashboard?.source === "live" ? "default" : "outline"}>
-                    {dashboard?.source === "live" ? "実データ" : "プレビュー"}
+                  <Badge variant={hasLiveDashboardData ? "default" : "outline"}>
+                    {hasLiveDashboardData ? "実データ" : "プレビュー"}
                   </Badge>
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-2">
@@ -987,12 +1003,20 @@ export function KakeiboLiffApp() {
               </section>
 
               <section className="grid gap-3">
-                <MetricCard
-                  label="外食残高"
-                  value={formatCurrency(liveDiningBalance)}
-                  icon={WalletCards}
-                  tone="green"
-                />
+                <div className="flex flex-wrap items-end justify-between gap-2 px-1">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-muted-foreground">
+                      対象月
+                    </p>
+                    <h2 className="truncate text-xl font-black tracking-normal">
+                      {homeMonthLabel}
+                    </h2>
+                  </div>
+                  <Badge variant={hasLiveDashboardData ? "default" : "outline"}>
+                    {hasLiveDashboardData ? "実データ" : "プレビュー"}
+                  </Badge>
+                </div>
+                <DiningBalanceCard users={visibleDashboardUsers} />
                 <MetricCard
                   label="買い物合計"
                   value={formatCurrency(totals.shopping)}
@@ -1456,7 +1480,7 @@ export function KakeiboLiffApp() {
                 </CardHeader>
                 <CardContent className="grid gap-4">
                   <div className="grid gap-3">
-                    {(dashboard?.users ?? []).map((user) => (
+                    {visibleDashboardUsers.map((user) => (
                       <div
                         key={user.id}
                         className="flex items-center justify-between gap-3 rounded-md border bg-background/70 px-3 py-2"
@@ -1469,7 +1493,7 @@ export function KakeiboLiffApp() {
                         </span>
                       </div>
                     ))}
-                    {dashboard?.users.length === 0 ? (
+                    {visibleDashboardUsers.length === 0 ? (
                       <p className="text-sm text-muted-foreground">
                         実データ未取得
                       </p>
@@ -1962,6 +1986,50 @@ function MetricCard({
         <div className="min-w-0">
           <p className="text-sm font-semibold text-muted-foreground">{label}</p>
           <p className="text-glow truncate text-2xl font-black tracking-normal">{value}</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DiningBalanceCard({ users }: { users: DashboardData["users"] }) {
+  const totalBalance = users.reduce((sum, user) => sum + user.diningBalance, 0);
+
+  return (
+    <Card>
+      <CardContent className="grid gap-4 p-5">
+        <div className="flex items-center gap-4">
+          <div className="grid size-12 shrink-0 place-items-center rounded-md bg-ledger-mint text-primary">
+            <WalletCards className="size-6" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-muted-foreground">外食残高</p>
+            <p className="text-glow truncate text-2xl font-black tracking-normal">
+              {users.length ? formatCurrency(totalBalance) : "未取得"}
+            </p>
+          </div>
+        </div>
+        <div className="grid gap-2">
+          {users.length ? (
+            users.map((user) => (
+              <div
+                key={user.id}
+                className="flex min-w-0 items-center justify-between gap-3 rounded-md border bg-background/70 px-3 py-2"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <UserRound className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                  <span className="truncate font-semibold">{user.displayName}</span>
+                </div>
+                <span className="text-glow shrink-0 font-black tabular-nums">
+                  {formatCurrency(user.diningBalance)}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-md border bg-background/70 px-3 py-2 text-sm font-semibold text-muted-foreground">
+              実データ未取得
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

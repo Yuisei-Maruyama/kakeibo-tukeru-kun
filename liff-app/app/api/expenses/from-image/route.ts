@@ -3,7 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 import { google, type calendar_v3 } from "googleapis";
 import { NextRequest, NextResponse } from "next/server";
 import { createFirestoreClient, createGoogleAuth } from "@/lib/google-server";
-import type { DashboardExpenseCategory } from "@/types/dashboard";
+import type { DashboardExpenseCategory, DashboardUser } from "@/types/dashboard";
 
 export const runtime = "nodejs";
 
@@ -23,6 +23,10 @@ type AnalysisResult = {
   items?: string[];
   error?: string;
   reason?: string;
+};
+type FirestoreSettings = {
+  calendarId?: string;
+  lineGroupId?: string;
 };
 
 let firestore: Firestore | null = null;
@@ -157,13 +161,33 @@ async function verifyLineUser(request: NextRequest): Promise<FirestoreUser> {
   return user;
 }
 
-async function getCalendarId() {
+async function getSettings() {
   const settingsDoc = await getFirestore().collection("settings").doc("global").get();
-  const settingsCalendarId = settingsDoc.exists
-    ? (settingsDoc.data()?.calendarId as string | undefined)
-    : undefined;
+  return settingsDoc.exists ? (settingsDoc.data() as FirestoreSettings) : {};
+}
 
-  return settingsCalendarId || process.env.GOOGLE_CALENDAR_ID || "";
+function getCalendarId(settings: FirestoreSettings) {
+  return settings.calendarId || process.env.GOOGLE_CALENDAR_ID || "";
+}
+
+async function getDashboardUsers(groupId = "") {
+  const snapshot = await getFirestore()
+    .collection("users")
+    .where("isActive", "==", true)
+    .orderBy("createdAt", "asc")
+    .get();
+
+  return snapshot.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }) as FirestoreUser)
+    .filter((user) => !groupId || user.groupId === groupId)
+    .map(
+      (user): DashboardUser => ({
+        id: user.id,
+        displayName: user.displayName,
+        diningBalance: user.diningBalance ?? 0,
+        groupId: user.groupId ?? "",
+      }),
+    );
 }
 
 async function analyzeReceiptImage(file: File): Promise<AnalysisResult> {
@@ -318,13 +342,16 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await analyzeReceiptImage(file);
-    const calendarEventId = await createCalendarEvent(await getCalendarId(), user, result);
+    const settings = await getSettings();
+    const calendarEventId = await createCalendarEvent(getCalendarId(settings), user, result);
     const { expense, diningBalance } = await saveExpense(user, result, calendarEventId);
+    const users = await getDashboardUsers(user.groupId || settings.lineGroupId || "");
 
     return NextResponse.json({
       status: "ok",
       message: "画像から支出を登録しました",
       diningBalance,
+      users,
       expense: {
         id: expense.id,
         date: result.date,
