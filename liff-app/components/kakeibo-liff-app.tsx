@@ -514,6 +514,8 @@ export function KakeiboLiffApp() {
       React.startTransition(() => {
         setExpenses((current) => [result.expense!, ...current]);
         setDashboard(null);
+        setReceiptFile(null);
+        setReceiptImageUrl(null);
         setToast(result.message);
       });
     } catch (error) {
