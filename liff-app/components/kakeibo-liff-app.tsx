@@ -62,7 +62,6 @@ import {
 import {
   type Expense,
   type ExpenseCategory,
-  type ScheduleInput,
   cn,
   formatCurrency,
   formatShortDate,
@@ -75,11 +74,15 @@ type AppCalendarEvent = DashboardData["calendarEvents"][number];
 type AppSubscription = DashboardData["subscriptions"][number];
 type DraftSubscription = Pick<
   AppSubscription,
-  "payerName" | "serviceName" | "amount" | "intervalLabel"
+  "payerName" | "serviceName" | "amount" | "startDate" | "intervalLabel"
 >;
 type DraftRent = NonNullable<DashboardData["rent"]>;
 type ExpenseCategoryFilter = "all" | ExpenseCategory;
 type ReportMode = "history" | "summary";
+type ApiResponse<T> = {
+  status: "ok" | "error";
+  message: string;
+} & T;
 type CommandTile =
   | { label: string; command: string; icon: React.ElementType; reportMode?: never; action?: never }
   | { label: string; reportMode: ReportMode; icon: React.ElementType; command?: never; action?: never }
@@ -134,6 +137,7 @@ const defaultSubscriptionDraft = (): DraftSubscription => ({
   payerName: "@自分",
   serviceName: "サブスク名",
   amount: 1000,
+  startDate: todayInputValue(),
   intervalLabel: "毎月",
 });
 
@@ -206,16 +210,29 @@ function toReportMonthInput(value: string) {
   return `${year}/${month}`;
 }
 
-function formatScheduleTimeLabel(input: ScheduleInput) {
-  if (input.startTime && input.endTime) {
-    return `${input.startTime} 〜 ${input.endTime}`;
+async function requestJson<T>(
+  path: string,
+  init: Omit<RequestInit, "headers"> & { headers?: HeadersInit } = {},
+) {
+  const idToken = getLiffIdToken();
+  const headers = new Headers(init.headers);
+  headers.set("content-type", "application/json");
+
+  if (idToken) {
+    headers.set("Authorization", `Bearer ${idToken}`);
   }
 
-  if (input.startTime) {
-    return input.startTime;
+  const response = await fetch(path, {
+    ...init,
+    headers,
+  });
+  const result = (await response.json()) as ApiResponse<T>;
+
+  if (!response.ok || result.status === "error") {
+    throw new Error(result.message);
   }
 
-  return "終日";
+  return result;
 }
 
 export function KakeiboLiffApp() {
@@ -231,10 +248,11 @@ export function KakeiboLiffApp() {
   const [addMode, setAddMode] = React.useState<"image" | "manual">("image");
   const [toast, setToast] = React.useState("フォームで既存 bot コマンドを送信できます");
   const [dashboard, setDashboard] = React.useState<DashboardData | null>(null);
-  const [dashboardMonth, setDashboardMonth] = React.useState(
+  const [dashboardMonth, setDashboardMonth] = React.useState(() =>
     todayInputValue().slice(0, 7),
   );
   const [isLoadingDashboard, setIsLoadingDashboard] = React.useState(false);
+  const [isMutating, setIsMutating] = React.useState(false);
   const [expenses, setExpenses] = React.useState<Expense[]>(initialExpenses);
   const [draftExpense, setDraftExpense] = React.useState<DraftExpense>(defaultDraft);
   const [receiptImageUrl, setReceiptImageUrl] = React.useState<string | null>(null);
@@ -505,118 +523,356 @@ export function KakeiboLiffApp() {
     }
   }
 
-  function submitExpense() {
-    const nextExpense = {
-      ...draftExpense,
-      id: `expense-${Date.now()}`,
-      amount: Number(draftExpense.amount),
-    };
-    setExpenses((current) => [nextExpense, ...current]);
-    setDraftExpense(defaultDraft());
-    setReportMode("history");
-    setActiveTab("history");
-    setToast("支出をアプリ内に追加しました");
+  async function submitExpense() {
+    if (!draftExpense.date || !draftExpense.storeName.trim()) {
+      setToast("日付と内容を入力してください");
+      return;
+    }
+
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<{ expense: Expense; diningBalance?: number }>(
+        "/api/expenses",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ...draftExpense,
+            amount: Number(draftExpense.amount),
+          }),
+        },
+      );
+
+      React.startTransition(() => {
+        setExpenses((current) =>
+          [result.expense, ...current].sort((a, b) => b.date.localeCompare(a.date)),
+        );
+        setDashboard(null);
+        setDraftExpense(defaultDraft());
+        setReportMode("history");
+        setActiveTab("history");
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "支出の保存に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
   }
 
-  function deleteExpense(expense: Expense) {
-    setExpenses((current) => current.filter((item) => item.id !== expense.id));
-    setToast(`${expense.storeName} をアプリ内で削除しました`);
+  async function deleteExpense(expense: Expense) {
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<{ expense: Expense; diningBalance?: number }>(
+        `/api/expenses/${encodeURIComponent(expense.id)}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      React.startTransition(() => {
+        setExpenses((current) => current.filter((item) => item.id !== expense.id));
+        setDashboard(null);
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "支出の削除に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
   }
 
-  function updateExpense(before: Expense, after: Expense) {
-    setExpenses((current) =>
-      current.map((item) => (item.id === before.id ? after : item)),
-    );
-    setToast(`${after.storeName} をアプリ内で更新しました`);
+  async function updateExpense(before: Expense, after: Expense) {
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<{ expense: Expense; diningBalance?: number }>(
+        `/api/expenses/${encodeURIComponent(before.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            ...after,
+            amount: Number(after.amount),
+          }),
+        },
+      );
+
+      React.startTransition(() => {
+        setExpenses((current) =>
+          current
+            .map((item) => (item.id === before.id ? result.expense : item))
+            .sort((a, b) => b.date.localeCompare(a.date)),
+        );
+        setDashboard(null);
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "支出の更新に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
   }
 
-  function addSchedule() {
+  async function addSchedule() {
     if (!schedule.title.trim() || !schedule.date) {
       setToast("予定の内容と日付を入力してください");
       return;
     }
 
-    const nextEvent: AppCalendarEvent = {
-      id: `schedule-${Date.now()}`,
-      title: schedule.title,
-      date: schedule.date,
-      timeLabel: formatScheduleTimeLabel(schedule),
-      type: "schedule",
-      description: schedule.participants,
-    };
+    setIsMutating(true);
 
-    setCalendarEvents((current) =>
-      [nextEvent, ...current].sort((a, b) => a.date.localeCompare(b.date)),
-    );
-    setSchedule((current) => ({
-      ...current,
-      title: "会議",
-      startTime: "",
-      endTime: "",
-    }));
-    setToast("予定をアプリ内に追加しました");
+    try {
+      const result = await requestJson<{ event: AppCalendarEvent }>(
+        "/api/calendar-events",
+        {
+          method: "POST",
+          body: JSON.stringify(schedule),
+        },
+      );
+
+      React.startTransition(() => {
+        setCalendarEvents((current) =>
+          [result.event, ...current].sort((a, b) => a.date.localeCompare(b.date)),
+        );
+        setSchedule((current) => ({
+          ...current,
+          title: "会議",
+          startTime: "",
+          endTime: "",
+        }));
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "予定の保存に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
   }
 
-  function updateSchedule(before: AppCalendarEvent, after: AppCalendarEvent) {
-    setCalendarEvents((current) =>
-      current.map((event) => (event.id === before.id ? after : event)),
-    );
-    setToast(`${after.title} をアプリ内で更新しました`);
+  async function updateSchedule(before: AppCalendarEvent, after: AppCalendarEvent) {
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<{ event: AppCalendarEvent }>(
+        `/api/calendar-events/${encodeURIComponent(before.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(after),
+        },
+      );
+
+      React.startTransition(() => {
+        setCalendarEvents((current) =>
+          current
+            .map((event) => (event.id === before.id ? result.event : event))
+            .sort((a, b) => a.date.localeCompare(b.date)),
+        );
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "予定の更新に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
   }
 
-  function deleteSchedule(event: AppCalendarEvent) {
-    setCalendarEvents((current) => current.filter((item) => item.id !== event.id));
-    setToast(`${event.title} をアプリ内で削除しました`);
+  async function deleteSchedule(event: AppCalendarEvent) {
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<Record<string, never>>(
+        `/api/calendar-events/${encodeURIComponent(event.id)}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      React.startTransition(() => {
+        setCalendarEvents((current) => current.filter((item) => item.id !== event.id));
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "予定の削除に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
   }
 
-  function addSubscription() {
+  async function addSubscription() {
     if (!subscriptionDraft.serviceName.trim()) {
       setToast("サブスク名を入力してください");
       return;
     }
 
-    const nextSubscription: AppSubscription = {
-      ...subscriptionDraft,
-      id: `subscription-${Date.now()}`,
-      amount: Number(subscriptionDraft.amount),
-      startDate: todayInputValue(),
-    };
+    setIsMutating(true);
 
-    setSubscriptions((current) => [nextSubscription, ...current]);
-    setSubscriptionDraft(defaultSubscriptionDraft());
-    setToast(`${nextSubscription.serviceName} をアプリ内に追加しました`);
+    try {
+      const result = await requestJson<{ subscription: AppSubscription }>(
+        "/api/subscriptions",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ...subscriptionDraft,
+            amount: Number(subscriptionDraft.amount),
+          }),
+        },
+      );
+
+      React.startTransition(() => {
+        setSubscriptions((current) =>
+          [result.subscription, ...current].sort((a, b) =>
+            a.startDate.localeCompare(b.startDate),
+          ),
+        );
+        setSubscriptionDraft(defaultSubscriptionDraft());
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "サブスクの保存に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
   }
 
-  function updateSubscription(
+  async function updateSubscription(
     before: AppSubscription,
     after: AppSubscription,
   ) {
-    setSubscriptions((current) =>
-      current.map((subscription) =>
-        subscription.id === before.id
-          ? { ...after, amount: Number(after.amount) }
-          : subscription,
-      ),
-    );
-    setToast(`${after.serviceName} をアプリ内で更新しました`);
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<{ subscription: AppSubscription }>(
+        `/api/subscriptions/${encodeURIComponent(before.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            ...after,
+            amount: Number(after.amount),
+          }),
+        },
+      );
+
+      React.startTransition(() => {
+        setSubscriptions((current) =>
+          current
+            .map((subscription) =>
+              subscription.id === before.id ? result.subscription : subscription,
+            )
+            .sort((a, b) => a.startDate.localeCompare(b.startDate)),
+        );
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "サブスクの更新に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
   }
 
-  function deleteSubscription(subscription: AppSubscription) {
-    setSubscriptions((current) =>
-      current.filter((item) => item.id !== subscription.id),
-    );
-    setToast(`${subscription.serviceName} をアプリ内で削除しました`);
+  async function deleteSubscription(subscription: AppSubscription) {
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<{ subscription: AppSubscription }>(
+        `/api/subscriptions/${encodeURIComponent(subscription.id)}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      React.startTransition(() => {
+        setSubscriptions((current) =>
+          current.filter((item) => item.id !== subscription.id),
+        );
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "サブスクの削除に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
   }
 
-  function updateRent() {
-    setRent({ ...rentDraft, amount: Number(rentDraft.amount) });
-    setToast("家賃をアプリ内で更新しました");
+  async function updateRent() {
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<{ rent: DraftRent }>("/api/rent", {
+        method: "PUT",
+        body: JSON.stringify({
+          ...rentDraft,
+          amount: Number(rentDraft.amount),
+        }),
+      });
+
+      React.startTransition(() => {
+        setRent(result.rent);
+        setRentDraft(result.rent);
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "家賃の保存に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
   }
 
-  function clearRent() {
-    setRent(null);
-    setRentDraft(defaultRentDraft());
-    setToast("家賃をアプリ内で削除しました");
+  async function clearRent() {
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<Record<string, never>>("/api/rent", {
+        method: "DELETE",
+      });
+
+      React.startTransition(() => {
+        setRent(null);
+        setRentDraft(defaultRentDraft());
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "家賃の削除に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  async function updateBudget() {
+    setIsMutating(true);
+
+    try {
+      const result = await requestJson<{
+        monthlyBudget: number;
+        users: DashboardData["users"];
+      }>("/api/settings/budget", {
+        method: "PUT",
+        body: JSON.stringify({
+          monthlyBudget: Number(budget),
+        }),
+      });
+
+      React.startTransition(() => {
+        setBudget(result.monthlyBudget);
+        setDashboard((current) =>
+          current
+            ? {
+                ...current,
+                users: result.users,
+                settings: {
+                  ...current.settings,
+                  monthlyBudget: result.monthlyBudget,
+                },
+              }
+            : current,
+        );
+        setToast(result.message);
+      });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "予算変更に失敗しました");
+    } finally {
+      setIsMutating(false);
+    }
   }
 
   return (
@@ -934,9 +1190,9 @@ export function KakeiboLiffApp() {
               ) : (
                 <ExpenseForm
                   draft={draftExpense}
-                  disabled={false}
+                  disabled={isMutating}
                   onChange={setDraftExpense}
-                  onSubmit={submitExpense}
+                  onSubmit={() => void submitExpense()}
                 />
               )}
             </div>
@@ -998,7 +1254,7 @@ export function KakeiboLiffApp() {
                     {reportMode === "history"
                       ? dashboard?.source === "live"
                         ? "Firestore の支出履歴"
-                        : "支出コマンド"
+                        : "プレビュー支出"
                       : `${formatYearMonthLabel(dashboardMonth)} の支出合計`}
                   </CardDescription>
                 </CardHeader>
@@ -1059,9 +1315,9 @@ export function KakeiboLiffApp() {
                             <ExpenseRow
                               key={expense.id}
                               expense={expense}
-                              disabled={false}
-                              onDelete={deleteExpense}
-                              onUpdate={updateExpense}
+                              disabled={isMutating}
+                              onDelete={(item) => void deleteExpense(item)}
+                              onUpdate={(before, after) => void updateExpense(before, after)}
                             />
                           ))}
                           {filteredExpenses.length === 0 ? (
@@ -1161,7 +1417,8 @@ export function KakeiboLiffApp() {
                   </Field>
                   <Button
                     type="button"
-                    onClick={addSchedule}
+                    disabled={isMutating}
+                    onClick={() => void addSchedule()}
                   >
                     <CalendarDays aria-hidden="true" />
                     予定登録
@@ -1172,13 +1429,14 @@ export function KakeiboLiffApp() {
               <Card>
                 <CardHeader>
                   <CardTitle>Calendar</CardTitle>
-                  <CardDescription>アプリ内の予定</CardDescription>
+                  <CardDescription>Google Calendar の予定</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <CalendarEventList
                     events={calendarEvents.slice(0, 5)}
-                    onDelete={deleteSchedule}
-                    onUpdate={updateSchedule}
+                    disabled={isMutating}
+                    onDelete={(event) => void deleteSchedule(event)}
+                    onUpdate={(before, after) => void updateSchedule(before, after)}
                   />
                 </CardContent>
               </Card>
@@ -1254,9 +1512,8 @@ export function KakeiboLiffApp() {
                   </Field>
                   <Button
                     type="button"
-                    onClick={() =>
-                      setToast(`月額予算を ${formatCurrency(budget)} に更新しました`)
-                    }
+                    disabled={isMutating}
+                    onClick={() => void updateBudget()}
                   >
                     <WalletCards aria-hidden="true" />
                     予算変更
@@ -1351,6 +1608,19 @@ export function KakeiboLiffApp() {
                         }
                       />
                     </Field>
+                    <Field label="開始日" htmlFor="subscription-start-date">
+                      <Input
+                        id="subscription-start-date"
+                        type="date"
+                        value={subscriptionDraft.startDate}
+                        onChange={(event) =>
+                          setSubscriptionDraft((current) => ({
+                            ...current,
+                            startDate: event.target.value,
+                          }))
+                        }
+                      />
+                    </Field>
                     <Field label="間隔" htmlFor="subscription-interval">
                       <Input
                         id="subscription-interval"
@@ -1364,7 +1634,11 @@ export function KakeiboLiffApp() {
                       />
                     </Field>
                   </div>
-                  <Button type="button" onClick={addSubscription}>
+                  <Button
+                    type="button"
+                    disabled={isMutating}
+                    onClick={() => void addSubscription()}
+                  >
                     <Plus aria-hidden="true" />
                     追加
                   </Button>
@@ -1404,11 +1678,16 @@ export function KakeiboLiffApp() {
                     />
                   </Field>
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <Button type="button" onClick={updateRent}>
+                    <Button type="button" disabled={isMutating} onClick={() => void updateRent()}>
                       <JapaneseYen aria-hidden="true" />
                       更新
                     </Button>
-                    <Button type="button" variant="destructive" onClick={clearRent}>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      disabled={isMutating}
+                      onClick={() => void clearRent()}
+                    >
                       <Trash2 aria-hidden="true" />
                       削除
                     </Button>
@@ -1425,8 +1704,9 @@ export function KakeiboLiffApp() {
                   {subscriptions.map((subscription) => (
                     <SubscriptionRow
                       key={subscription.id}
-                      onDelete={deleteSubscription}
-                      onUpdate={updateSubscription}
+                      disabled={isMutating}
+                      onDelete={(item) => void deleteSubscription(item)}
+                      onUpdate={(before, after) => void updateSubscription(before, after)}
                       subscription={subscription}
                     />
                   ))}
@@ -1473,10 +1753,12 @@ function DataLine({ label, value }: { label: string; value: string }) {
 
 function CalendarEventList({
   events,
+  disabled = false,
   onDelete,
   onUpdate,
 }: {
   events: AppCalendarEvent[];
+  disabled?: boolean;
   onDelete?: (event: AppCalendarEvent) => void;
   onUpdate?: (before: AppCalendarEvent, after: AppCalendarEvent) => void;
 }) {
@@ -1494,6 +1776,7 @@ function CalendarEventList({
         <CalendarEventItem
           key={event.id}
           event={event}
+          disabled={disabled}
           onDelete={onDelete}
           onUpdate={onUpdate}
         />
@@ -1504,15 +1787,20 @@ function CalendarEventList({
 
 function CalendarEventItem({
   event,
+  disabled,
   onDelete,
   onUpdate,
 }: {
   event: AppCalendarEvent;
+  disabled: boolean;
   onDelete?: (event: AppCalendarEvent) => void;
   onUpdate?: (before: AppCalendarEvent, after: AppCalendarEvent) => void;
 }) {
   const [draft, setDraft] = React.useState<AppCalendarEvent>(event);
-  const canEdit = event.type === "schedule" && Boolean(onDelete && onUpdate);
+  const canEdit =
+    event.type === "schedule" &&
+    Boolean(onDelete && onUpdate) &&
+    isManagedScheduleEvent(event);
 
   React.useEffect(() => {
     setDraft(event);
@@ -1557,7 +1845,7 @@ function CalendarEventItem({
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>予定を更新</DialogTitle>
-                <DialogDescription>アプリ内の予定内容を更新します</DialogDescription>
+                <DialogDescription>Google Calendar の予定内容を更新します</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4">
                 <Field label="内容" htmlFor={`${event.id}-event-title`}>
@@ -1605,7 +1893,11 @@ function CalendarEventItem({
                   </Button>
                 </DialogClose>
                 <DialogClose asChild>
-                  <Button type="button" onClick={() => onUpdate?.(event, draft)}>
+                  <Button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => onUpdate?.(event, draft)}
+                  >
                     <Send aria-hidden="true" />
                     更新
                   </Button>
@@ -1618,6 +1910,7 @@ function CalendarEventItem({
             variant="destructive"
             size="icon"
             aria-label="予定を削除"
+            disabled={disabled}
             onClick={() => onDelete?.(event)}
           >
             <Trash2 aria-hidden="true" />
@@ -1625,6 +1918,18 @@ function CalendarEventItem({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function isManagedScheduleEvent(event: AppCalendarEvent) {
+  const description = event.description ?? "";
+  const hasManagedSource =
+    description.includes("登録元: LIFF家計ぼっと") ||
+    description.includes("登録元: LINE家計簿Bot");
+
+  return (
+    (hasManagedSource && description.includes("予定:")) ||
+    event.title.startsWith("[予定]")
   );
 }
 
@@ -1846,10 +2151,12 @@ function ExpenseForm({
 
 function SubscriptionRow({
   subscription,
+  disabled,
   onDelete,
   onUpdate,
 }: {
   subscription: AppSubscription;
+  disabled: boolean;
   onDelete: (subscription: AppSubscription) => void;
   onUpdate: (before: AppSubscription, after: AppSubscription) => void;
 }) {
@@ -1880,7 +2187,7 @@ function SubscriptionRow({
           <DialogContent>
             <DialogHeader>
               <DialogTitle>サブスクを更新</DialogTitle>
-              <DialogDescription>アプリ内のサブスク内容を更新します</DialogDescription>
+              <DialogDescription>Firestore のサブスク内容を更新します</DialogDescription>
             </DialogHeader>
             <div className="grid gap-4">
               <Field label="支払い者" htmlFor={`${subscription.id}-subscription-payer`}>
@@ -1921,6 +2228,19 @@ function SubscriptionRow({
                   }
                 />
               </Field>
+              <Field label="開始日" htmlFor={`${subscription.id}-subscription-start-date`}>
+                <Input
+                  id={`${subscription.id}-subscription-start-date`}
+                  type="date"
+                  value={draft.startDate}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      startDate: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
               <Field label="間隔" htmlFor={`${subscription.id}-subscription-interval`}>
                 <Input
                   id={`${subscription.id}-subscription-interval`}
@@ -1943,6 +2263,7 @@ function SubscriptionRow({
               <DialogClose asChild>
                 <Button
                   type="button"
+                  disabled={disabled}
                   onClick={() => onUpdate(subscription, draft)}
                 >
                   <Send aria-hidden="true" />
@@ -1957,6 +2278,7 @@ function SubscriptionRow({
           variant="destructive"
           size="icon"
           aria-label="サブスクを削除"
+          disabled={disabled}
           onClick={() => onDelete(subscription)}
         >
           <Trash2 aria-hidden="true" />
@@ -2014,7 +2336,9 @@ function ExpenseRow({
           <DialogContent>
             <DialogHeader>
               <DialogTitle>支出を更新</DialogTitle>
-              <DialogDescription>アプリ内の支出内容を更新します</DialogDescription>
+              <DialogDescription>
+                Firestore / Google Calendar の支出内容を更新します
+              </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4">
               <Field label="支払い者" htmlFor={`${expense.id}-payer`}>
