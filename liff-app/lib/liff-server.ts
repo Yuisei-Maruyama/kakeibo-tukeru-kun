@@ -268,6 +268,19 @@ export async function getActiveUsers(groupId = "") {
     .filter((user) => !groupId || user.groupId === groupId);
 }
 
+export async function getDashboardUsers(groupId = "") {
+  const users = await getActiveUsers(groupId);
+
+  return users.map(
+    (user): DashboardUser => ({
+      id: user.id,
+      displayName: user.displayName,
+      diningBalance: user.diningBalance ?? 0,
+      groupId: user.groupId ?? "",
+    }),
+  );
+}
+
 export async function getAuthorizedContext(request: NextRequest): Promise<AuthorizedContext> {
   const user = await verifyLineUser(request);
   const settings = await getSettings();

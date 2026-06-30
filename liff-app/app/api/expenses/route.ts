@@ -9,6 +9,7 @@ import {
   deleteCalendarEvent,
   getAuthorizedContext,
   getCalendarId,
+  getDashboardUsers,
   getErrorMessage,
   getFirestore,
   isExpenseCategory,
@@ -86,11 +87,13 @@ export async function POST(request: NextRequest) {
       throw error;
     }
     const diningBalance = await applyDiningBalanceForCreate(expense);
+    const users = await getDashboardUsers(context.groupId);
 
     return NextResponse.json({
       status: "ok",
       message: "Firestore / Google Calendar に支出を保存しました",
       diningBalance,
+      users,
       expense: mapExpenseForClient(expense),
     });
   } catch (error) {

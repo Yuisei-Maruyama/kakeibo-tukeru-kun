@@ -10,6 +10,7 @@ import {
   ensureGroupExpenseAccess,
   getAuthorizedContext,
   getCalendarId,
+  getDashboardUsers,
   getErrorMessage,
   getFirestore,
   isExpenseCategory,
@@ -111,11 +112,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       calendarEventId: after.calendarEventId,
     });
     const diningBalance = await applyDiningBalanceForUpdate(before, after);
+    const users = await getDashboardUsers(authorizedContext.groupId);
 
     return NextResponse.json({
       status: "ok",
       message: "Firestore / Google Calendar の支出を更新しました",
       diningBalance,
+      users,
       expense: mapExpenseForClient(after),
     });
   } catch (error) {
@@ -144,11 +147,13 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     await getFirestore().collection("expenses").doc(id).delete();
     const diningBalance = await applyDiningBalanceForDelete(expense);
+    const users = await getDashboardUsers(authorizedContext.groupId);
 
     return NextResponse.json({
       status: "ok",
       message: "Firestore / Google Calendar から支出を削除しました",
       diningBalance,
+      users,
       expense: mapExpenseForClient(expense),
     });
   } catch (error) {
