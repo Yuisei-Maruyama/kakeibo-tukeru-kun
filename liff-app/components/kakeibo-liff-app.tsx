@@ -7,6 +7,7 @@ import {
   Camera,
   ChartNoAxesCombined,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleHelp,
@@ -2771,6 +2772,12 @@ function ReceiptNoteCategoryCard({
     users[1]?.name ??
     users[0]?.name ??
     "";
+  // 開いている明細行のキー（同時に 1 行のみ展開）
+  const [expandedKey, setExpandedKey] = React.useState<string | null>(null);
+  // 全体確認セクションの開閉状態
+  const [confirmationExpanded, setConfirmationExpanded] = React.useState(false);
+  const allReceived =
+    summary.rows.length > 0 && summary.receivedCount === summary.rows.length;
 
   return (
     <Card>
@@ -2780,128 +2787,44 @@ function ReceiptNoteCategoryCard({
             <CardTitle>{summary.label}</CardTitle>
             <CardDescription>{summary.description}</CardDescription>
           </div>
-          <Badge
-            variant={
-              summary.rows.length > 0 && summary.receivedCount === summary.rows.length
-                ? "default"
-                : "outline"
-            }
-          >
-            {formatCurrency(summary.total)}
-          </Badge>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <Badge variant="outline">{formatCurrency(summary.total)}</Badge>
+            {summary.rows.length > 0 ? (
+              <Badge variant={allReceived ? "default" : "outline"}>
+                {summary.receivedCount}/{summary.rows.length} 受領
+              </Badge>
+            ) : null}
+            {confirmation.checked ? (
+              <Badge variant="default">確認済み</Badge>
+            ) : null}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
         <fieldset className="grid gap-3">
           <legend className="sr-only">{summary.label}の受領明細</legend>
           {summary.rows.map((row, index) => (
-            <div
+            <ReceiptNoteRowItem
               key={row.key}
-              className="grid gap-3 rounded-md border bg-background/70 p-3"
-            >
-              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <UserRound className="size-4 shrink-0 text-primary" aria-hidden="true" />
-                  <span className="min-w-0 truncate font-semibold">{row.user.name}</span>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Badge variant={row.isManual ? "outline" : "secondary"}>
-                    {row.isManual ? "追加" : "集計"}
-                  </Badge>
-                  <Badge variant={row.received ? "default" : "secondary"}>
-                    {row.received ? "受領完了" : "未確認"}
-                  </Badge>
-                </div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Field
-                  label="カテゴリー"
-                  htmlFor={`${summary.value}-${index}-receipt-category`}
-                >
-                  <ReceiptNoteCategorySelect
-                    id={`${summary.value}-${index}-receipt-category`}
-                    value={row.category}
-                    disabled={disabled}
-                    onChange={(category) => onCategoryChange(row, category)}
-                  />
-                </Field>
-                {row.category === "other" ? (
-                  <Field
-                    label="タイトル"
-                    htmlFor={`${summary.value}-${index}-receipt-title`}
-                  >
-                    <Input
-                      id={`${summary.value}-${index}-receipt-title`}
-                      name={`${summary.value}-${index}-receipt-title`}
-                      value={row.user.name}
-                      disabled={disabled}
-                      onChange={(event) =>
-                        onUserDraftChange(row.key, event.target.value)
-                      }
-                      onBlur={(event) => onUserChange(row, event.target.value)}
-                    />
-                  </Field>
-                ) : (
-                  <Field
-                    label="ユーザー"
-                    htmlFor={`${summary.value}-${index}-receipt-user`}
-                  >
-                    <ReceiptNoteUserSelect
-                      id={`${summary.value}-${index}-receipt-user`}
-                      users={users}
-                      value={row.user.name}
-                      disabled={disabled}
-                      onChange={(userName) => onUserChange(row, userName)}
-                    />
-                  </Field>
-                )}
-                <Field
-                  label="設定額"
-                  htmlFor={`${summary.value}-${index}-receipt-amount`}
-                >
-                  <Input
-                    id={`${summary.value}-${index}-receipt-amount`}
-                    name={`${summary.value}-${index}-receipt-amount`}
-                    type="number"
-                    min={0}
-                    inputMode="numeric"
-                    value={row.amount}
-                    disabled={disabled}
-                    onChange={(event) =>
-                      onAmountDraftChange(row.key, Number(event.target.value))
-                    }
-                    onBlur={(event) =>
-                      onAmountChange(row, Number(event.target.value))
-                    }
-                  />
-                </Field>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
-                <label className="flex min-h-12 items-center gap-3 rounded-md border bg-card/70 px-3 py-2 text-sm font-semibold">
-                  <input
-                    name={`${summary.value}-${index}-received`}
-                    type="checkbox"
-                    checked={row.received}
-                    disabled={disabled}
-                    onChange={(event) =>
-                      onReceivedChange(row, event.target.checked)
-                    }
-                    className="chalk-checkbox size-5 shrink-0"
-                  />
-                  <span>受領完了</span>
-                </label>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  className="sm:w-28"
-                  disabled={disabled}
-                  onClick={() => onDeleteRow(row)}
-                >
-                  <ButtonIcon busy={disabled} icon={Trash2} />
-                  削除
-                </Button>
-              </div>
-            </div>
+              row={row}
+              summaryValue={summary.value}
+              index={index}
+              users={users}
+              disabled={disabled}
+              expanded={expandedKey === row.key}
+              onToggle={() =>
+                setExpandedKey((current) =>
+                  current === row.key ? null : row.key,
+                )
+              }
+              onAmountDraftChange={onAmountDraftChange}
+              onAmountChange={onAmountChange}
+              onReceivedChange={onReceivedChange}
+              onCategoryChange={onCategoryChange}
+              onUserDraftChange={onUserDraftChange}
+              onUserChange={onUserChange}
+              onDeleteRow={onDeleteRow}
+            />
           ))}
           {summary.rows.length === 0 ? (
             <div className="rounded-md border bg-background/70 p-4 text-sm text-muted-foreground">
@@ -2912,40 +2835,12 @@ function ReceiptNoteCategoryCard({
 
         <fieldset className="grid gap-3 rounded-md border bg-background/70 p-3">
           <legend className="sr-only">{summary.label}の全体確認</legend>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="確認者" htmlFor={`${summary.value}-confirmed-by`}>
-              <ReceiptNoteUserSelect
-                id={`${summary.value}-confirmed-by`}
-                name={`${summary.value}-confirmed-by`}
-                users={users}
-                value={confirmedBy}
-                disabled={disabled}
-                onChange={(value) =>
-                  onConfirmationChange(summary.value, { confirmedBy: value })
-                }
-              />
-            </Field>
-            <Field label="確認日" htmlFor={`${summary.value}-confirmed-date`}>
-              <Input
-                id={`${summary.value}-confirmed-date`}
-                name={`${summary.value}-confirmed-date`}
-                type="date"
-                value={confirmation.date}
-                disabled={disabled}
-                onChange={(event) =>
-                  onConfirmationChange(summary.value, {
-                    date: event.target.value,
-                  })
-                }
-              />
-            </Field>
-          </div>
-          <label className="flex min-h-12 items-center gap-3 rounded-md border bg-card/70 px-3 py-2 text-sm font-semibold">
+          <div className="flex min-w-0 items-center gap-3">
             <input
-              name={`${summary.value}-overall-confirmed`}
               type="checkbox"
               checked={confirmation.checked}
               disabled={disabled}
+              aria-label={`${summary.label}を全体確認済みにする`}
               onChange={(event) =>
                 onConfirmationChange(summary.value, {
                   checked: event.target.checked,
@@ -2954,16 +2849,231 @@ function ReceiptNoteCategoryCard({
               }
               className="chalk-checkbox size-5 shrink-0"
             />
-            <span className="min-w-0">
-              <span className="block">全体確認済み</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                {confirmedBy ? `${confirmedBy} / ${confirmation.date}` : "確認者未取得"}
-              </span>
-            </span>
-          </label>
+            <button
+              type="button"
+              className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
+              aria-expanded={confirmationExpanded}
+              aria-controls={`${summary.value}-confirmation-panel`}
+              onClick={() => setConfirmationExpanded((current) => !current)}
+            >
+              <span className="shrink-0 font-semibold">全体確認</span>
+              {confirmation.checked ? (
+                <span className="min-w-0 flex-1 truncate text-sm text-primary">
+                  {confirmedBy} / {confirmation.date}
+                </span>
+              ) : null}
+              <AccordionChevron
+                expanded={confirmationExpanded}
+                className="ml-auto"
+              />
+            </button>
+          </div>
+          {confirmationExpanded ? (
+            <div
+              id={`${summary.value}-confirmation-panel`}
+              className="grid gap-3 border-t border-dashed pt-3 sm:grid-cols-2"
+            >
+              <Field label="確認者" htmlFor={`${summary.value}-confirmed-by`}>
+                <ReceiptNoteUserSelect
+                  id={`${summary.value}-confirmed-by`}
+                  name={`${summary.value}-confirmed-by`}
+                  users={users}
+                  value={confirmedBy}
+                  disabled={disabled}
+                  onChange={(value) =>
+                    onConfirmationChange(summary.value, { confirmedBy: value })
+                  }
+                />
+              </Field>
+              <Field label="確認日" htmlFor={`${summary.value}-confirmed-date`}>
+                <Input
+                  id={`${summary.value}-confirmed-date`}
+                  name={`${summary.value}-confirmed-date`}
+                  type="date"
+                  value={confirmation.date}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onConfirmationChange(summary.value, {
+                      date: event.target.value,
+                    })
+                  }
+                />
+              </Field>
+            </div>
+          ) : null}
         </fieldset>
       </CardContent>
     </Card>
+  );
+}
+
+function AccordionChevron({
+  expanded,
+  className,
+}: {
+  expanded: boolean;
+  className?: string;
+}) {
+  return (
+    <ChevronDown
+      className={cn(
+        "size-4 shrink-0 text-muted-foreground transition-transform",
+        expanded && "rotate-180",
+        className,
+      )}
+      aria-hidden="true"
+    />
+  );
+}
+
+function ReceiptNoteRowItem({
+  row,
+  summaryValue,
+  index,
+  users,
+  disabled,
+  expanded,
+  onToggle,
+  onAmountDraftChange,
+  onAmountChange,
+  onReceivedChange,
+  onCategoryChange,
+  onUserDraftChange,
+  onUserChange,
+  onDeleteRow,
+}: {
+  row: ReceiptNoteRow;
+  summaryValue: ReceiptNoteCategory;
+  index: number;
+  users: ReceiptNoteUser[];
+  disabled: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onAmountDraftChange: (rowKey: string, amount: number) => void;
+  onAmountChange: (row: ReceiptNoteRow, amount: number) => void;
+  onReceivedChange: (row: ReceiptNoteRow, checked: boolean) => void;
+  onCategoryChange: (row: ReceiptNoteRow, category: ReceiptNoteCategory) => void;
+  onUserDraftChange: (rowKey: string, userName: string) => void;
+  onUserChange: (row: ReceiptNoteRow, userName: string) => void;
+  onDeleteRow: (row: ReceiptNoteRow) => void;
+}) {
+  const panelId = `${summaryValue}-${index}-receipt-panel`;
+
+  return (
+    <div
+      className={cn(
+        "grid gap-3 rounded-md border p-3 transition-colors",
+        row.received ? "border-primary/45 bg-primary/10" : "bg-background/70",
+      )}
+    >
+      {/* サマリー行 */}
+      <div className="flex min-w-0 items-center gap-3">
+        <input
+          type="checkbox"
+          className="chalk-checkbox size-5 shrink-0"
+          checked={row.received}
+          disabled={disabled}
+          aria-label={`${row.user.name} を受領完了にする`}
+          onChange={(event) => onReceivedChange(row, event.target.checked)}
+        />
+        <button
+          type="button"
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
+          aria-expanded={expanded}
+          aria-controls={panelId}
+          onClick={onToggle}
+        >
+          <span className="min-w-0 flex-1 truncate font-semibold">
+            {row.user.name}
+          </span>
+          {row.isManual ? <Badge variant="outline">追加</Badge> : null}
+          <span className="shrink-0 font-bold tabular-nums">
+            {formatCurrency(row.amount)}
+          </span>
+          <AccordionChevron expanded={expanded} />
+        </button>
+      </div>
+      {/* 編集パネル */}
+      {expanded ? (
+        <div
+          id={panelId}
+          className="grid gap-3 border-t border-dashed pt-3"
+        >
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field
+              label="カテゴリー"
+              htmlFor={`${summaryValue}-${index}-receipt-category`}
+            >
+              <ReceiptNoteCategorySelect
+                id={`${summaryValue}-${index}-receipt-category`}
+                value={row.category}
+                disabled={disabled}
+                onChange={(category) => onCategoryChange(row, category)}
+              />
+            </Field>
+            {row.category === "other" ? (
+              <Field
+                label="タイトル"
+                htmlFor={`${summaryValue}-${index}-receipt-title`}
+              >
+                <Input
+                  id={`${summaryValue}-${index}-receipt-title`}
+                  name={`${summaryValue}-${index}-receipt-title`}
+                  value={row.user.name}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onUserDraftChange(row.key, event.target.value)
+                  }
+                  onBlur={(event) => onUserChange(row, event.target.value)}
+                />
+              </Field>
+            ) : (
+              <Field
+                label="ユーザー"
+                htmlFor={`${summaryValue}-${index}-receipt-user`}
+              >
+                <ReceiptNoteUserSelect
+                  id={`${summaryValue}-${index}-receipt-user`}
+                  users={users}
+                  value={row.user.name}
+                  disabled={disabled}
+                  onChange={(userName) => onUserChange(row, userName)}
+                />
+              </Field>
+            )}
+            <Field
+              label="設定額"
+              htmlFor={`${summaryValue}-${index}-receipt-amount`}
+            >
+              <Input
+                id={`${summaryValue}-${index}-receipt-amount`}
+                name={`${summaryValue}-${index}-receipt-amount`}
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={row.amount}
+                disabled={disabled}
+                onChange={(event) =>
+                  onAmountDraftChange(row.key, Number(event.target.value))
+                }
+                onBlur={(event) =>
+                  onAmountChange(row, Number(event.target.value))
+                }
+              />
+            </Field>
+          </div>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={disabled}
+            onClick={() => onDeleteRow(row)}
+          >
+            <ButtonIcon busy={disabled} icon={Trash2} />
+            削除
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
