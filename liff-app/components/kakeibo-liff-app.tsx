@@ -74,8 +74,9 @@ import type {
   ReceiptNoteCategory,
 } from "@/types/dashboard";
 
-type DraftExpense = Omit<Expense, "id" | "category"> & {
+type DraftExpense = Omit<Expense, "id" | "category" | "amount"> & {
   category: ExpenseCategory | "";
+  amount: number | "";
 };
 type AppCalendarEvent = DashboardData["calendarEvents"][number];
 type AppSubscription = DashboardData["subscriptions"][number];
@@ -114,9 +115,9 @@ type ReceiptNoteCategorySummary = {
   receivedCount: number;
 };
 type ReceiptNoteDraft = {
-  category: ReceiptNoteCategory;
+  category: ReceiptNoteCategory | "";
   userName: string;
-  amount: number;
+  amount: number | "";
 };
 type ApiResponse<T> = {
   status: "ok" | "error";
@@ -217,7 +218,7 @@ const defaultDraft = (): DraftExpense => ({
   date: todayInputValue(),
   category: "",
   payer: "@自分",
-  amount: 1280,
+  amount: "",
   storeName: "手動入力",
   memo: "",
 });
@@ -399,7 +400,7 @@ export function KakeiboLiffApp() {
   const [isAnalyzingImage, setIsAnalyzingImage] = React.useState(false);
   const [schedule, setSchedule] = React.useState({
     participants: "@自分",
-    title: "会議",
+    title: "",
     date: todayInputValue(),
     startTime: "",
     endTime: "",
@@ -439,19 +440,22 @@ export function KakeiboLiffApp() {
     DashboardReceiptNote[]
   >([]);
   const [receiptNoteDraft, setReceiptNoteDraft] = React.useState<ReceiptNoteDraft>({
-    category: "diningSaving",
+    category: "",
     userName: "",
-    amount: 0,
+    amount: "",
   });
   const [receiptNoteConfirmations, setReceiptNoteConfirmations] = React.useState<
     Record<ReceiptNoteCategory, ReceiptNoteConfirmation>
   >(() => createReceiptNoteConfirmations(todayInputValue()));
   const [showSaveToast, setShowSaveToast] = React.useState(false);
+  const [errorToast, setErrorToast] = React.useState<string | null>(null);
   const saveToastTimerRef = React.useRef<number | null>(null);
+  const errorToastTimerRef = React.useRef<number | null>(null);
   const cameraInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const celebrateSave = React.useCallback(() => {
     setShowSaveToast(true);
+    setErrorToast(null);
     if (saveToastTimerRef.current) {
       window.clearTimeout(saveToastTimerRef.current);
     }
@@ -460,10 +464,26 @@ export function KakeiboLiffApp() {
     }, 3500);
   }, []);
 
+  // 登録エラーを画面下部に目立つ形で表示する
+  const showError = React.useCallback((message: string) => {
+    setToast(message);
+    setErrorToast(message);
+    setShowSaveToast(false);
+    if (errorToastTimerRef.current) {
+      window.clearTimeout(errorToastTimerRef.current);
+    }
+    errorToastTimerRef.current = window.setTimeout(() => {
+      setErrorToast(null);
+    }, 4000);
+  }, []);
+
   React.useEffect(() => {
     return () => {
       if (saveToastTimerRef.current) {
         window.clearTimeout(saveToastTimerRef.current);
+      }
+      if (errorToastTimerRef.current) {
+        window.clearTimeout(errorToastTimerRef.current);
       }
     };
   }, []);
@@ -804,7 +824,7 @@ export function KakeiboLiffApp() {
 
   async function submitReceiptImage() {
     if (!receiptFile) {
-      setToast("レシート画像を選択してください");
+      showError("レシート画像を選択してください");
       return;
     }
 
@@ -844,7 +864,7 @@ export function KakeiboLiffApp() {
         celebrateSave();
       });
     } catch (error) {
-      setToast(error instanceof Error ? error.message : "画像登録に失敗しました");
+      showError(error instanceof Error ? error.message : "画像登録に失敗しました");
     } finally {
       setIsAnalyzingImage(false);
     }
@@ -852,12 +872,22 @@ export function KakeiboLiffApp() {
 
   async function submitExpense() {
     if (!draftExpense.date || !draftExpense.storeName.trim()) {
-      setToast("日付と内容を入力してください");
+      showError("日付と内容を入力してください");
       return;
     }
 
     if (!draftExpense.category) {
-      setToast("カテゴリーを選択してください");
+      showError("カテゴリーを選択してください");
+      return;
+    }
+
+    const expenseAmount = Number(draftExpense.amount);
+    if (
+      draftExpense.amount === "" ||
+      !Number.isFinite(expenseAmount) ||
+      expenseAmount <= 0
+    ) {
+      showError("金額は 1 円以上で入力してください");
       return;
     }
 
@@ -888,7 +918,7 @@ export function KakeiboLiffApp() {
         celebrateSave();
       });
     } catch (error) {
-      setToast(error instanceof Error ? error.message : "支出の保存に失敗しました");
+      showError(error instanceof Error ? error.message : "支出の保存に失敗しました");
     } finally {
       setIsMutating(false);
     }
@@ -953,7 +983,7 @@ export function KakeiboLiffApp() {
 
   async function addSchedule() {
     if (!schedule.title.trim() || !schedule.date) {
-      setToast("予定の内容と日付を入力してください");
+      showError("予定の内容と日付を入力してください");
       return;
     }
 
@@ -974,7 +1004,7 @@ export function KakeiboLiffApp() {
         );
         setSchedule((current) => ({
           ...current,
-          title: "会議",
+          title: "",
           startTime: "",
           endTime: "",
         }));
@@ -982,7 +1012,7 @@ export function KakeiboLiffApp() {
         celebrateSave();
       });
     } catch (error) {
-      setToast(error instanceof Error ? error.message : "予定の保存に失敗しました");
+      showError(error instanceof Error ? error.message : "予定の保存に失敗しました");
     } finally {
       setIsMutating(false);
     }
@@ -1040,7 +1070,7 @@ export function KakeiboLiffApp() {
 
   async function addSubscription() {
     if (!subscriptionDraft.serviceName.trim()) {
-      setToast("サブスク名を入力してください");
+      showError("サブスク名を入力してください");
       return;
     }
 
@@ -1069,7 +1099,7 @@ export function KakeiboLiffApp() {
         celebrateSave();
       });
     } catch (error) {
-      setToast(error instanceof Error ? error.message : "サブスクの保存に失敗しました");
+      showError(error instanceof Error ? error.message : "サブスクの保存に失敗しました");
     } finally {
       setIsMutating(false);
     }
@@ -1267,14 +1297,28 @@ export function KakeiboLiffApp() {
   }
 
   async function addReceiptNoteRow() {
-    const isOther = receiptNoteDraft.category === "other";
-    const userName = isOther
-      ? receiptNoteDraft.userName.trim()
-      : receiptNoteDraft.userName.trim() || receiptNoteUsers[0]?.name || "@自分";
-    if (!userName || !Number.isFinite(receiptNoteDraft.amount)) {
-      setToast(
-        isOther ? "タイトルと金額を入力してください" : "ユーザーと金額を入力してください",
+    const { category } = receiptNoteDraft;
+    if (!category) {
+      showError("カテゴリーを選択してください");
+      return;
+    }
+
+    const isOther = category === "other";
+    const userName = receiptNoteDraft.userName.trim();
+    if (!userName) {
+      showError(
+        isOther ? "タイトルを入力してください" : "ユーザーを選択してください",
       );
+      return;
+    }
+
+    const amount = Number(receiptNoteDraft.amount);
+    if (
+      receiptNoteDraft.amount === "" ||
+      !Number.isFinite(amount) ||
+      amount <= 0
+    ) {
+      showError("金額は 1 円以上で入力してください");
       return;
     }
 
@@ -1287,9 +1331,9 @@ export function KakeiboLiffApp() {
           method: "POST",
           body: JSON.stringify({
             month: dashboardMonth,
-            category: receiptNoteDraft.category,
+            category,
             userName,
-            amount: receiptNoteDraft.amount,
+            amount,
             received: false,
             source: "manual",
           }),
@@ -1297,15 +1341,15 @@ export function KakeiboLiffApp() {
       );
 
       applySavedReceiptNote(result.receiptNote);
-      setReceiptNoteFilter(receiptNoteDraft.category);
+      setReceiptNoteFilter(category);
       setReceiptNoteDraft((current) => ({
         ...current,
-        amount: 0,
+        amount: "",
       }));
       setToast(result.message);
       celebrateSave();
     } catch (error) {
-      setToast(error instanceof Error ? error.message : "受領ノートの保存に失敗しました");
+      showError(error instanceof Error ? error.message : "受領ノートの保存に失敗しました");
     } finally {
       setIsMutating(false);
     }
@@ -1488,7 +1532,7 @@ export function KakeiboLiffApp() {
     return (
       <main className="chalkboard grid min-h-dvh place-items-center text-foreground">
         <div className="flex flex-col items-center gap-3">
-          <YadonSpinner className="size-12" />
+          <YadonSpinner className="size-14" />
           <p className="text-glow text-xl">準備中…</p>
           <p className="text-sm text-muted-foreground">LIFFを確認しています</p>
         </div>
@@ -1503,7 +1547,7 @@ export function KakeiboLiffApp() {
           <div className="mx-auto flex w-full max-w-md items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
               <div className="grid size-10 shrink-0 place-items-center rounded-md border border-yadon/60 bg-yadon/15 shadow-ledger">
-                <YadonMark variant="front" className="size-8" />
+                <YadonMark variant="front" className="size-11" />
               </div>
               <div className="min-w-0">
                 <h1 className="truncate text-lg font-black leading-tight tracking-normal">
@@ -1562,7 +1606,7 @@ export function KakeiboLiffApp() {
             </div>
             <YadonMark
               variant="animated"
-              className="ml-auto size-8 shrink-0 self-center"
+              className="ml-auto size-10 shrink-0 self-center"
             />
           </div>
         </section>
@@ -1820,7 +1864,7 @@ export function KakeiboLiffApp() {
                         />
                       ) : (
                         <>
-                          <YadonMark className="size-14" />
+                          <YadonMark className="size-16" />
                           <span className="font-semibold">写真を追加</span>
                         </>
                       )}
@@ -1871,7 +1915,7 @@ export function KakeiboLiffApp() {
                       <CardTitle>履歴取得</CardTitle>
                       <CardDescription>月指定</CardDescription>
                     </div>
-                    <YadonMark variant="back" className="size-9 shrink-0" />
+                    <YadonMark variant="back" className="size-11 shrink-0" />
                   </div>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-4">
@@ -2017,7 +2061,7 @@ export function KakeiboLiffApp() {
                       <CardTitle>予定登録</CardTitle>
                       <CardDescription>Google カレンダー連携</CardDescription>
                     </div>
-                    <YadonMark variant="galar" className="size-9 shrink-0" />
+                    <YadonMark variant="galar" className="size-11 shrink-0" />
                   </div>
                 </CardHeader>
                 <CardContent className="grid gap-4">
@@ -2077,6 +2121,7 @@ export function KakeiboLiffApp() {
                   <Field label="内容" htmlFor="schedule-title">
                     <Textarea
                       id="schedule-title"
+                      placeholder="内容を明記してください"
                       value={schedule.title}
                       onChange={(event) =>
                         setSchedule((current) => ({
@@ -2126,7 +2171,7 @@ export function KakeiboLiffApp() {
                       <CardTitle>Firestore</CardTitle>
                       <CardDescription>ユーザー・固定費</CardDescription>
                     </div>
-                    <YadonMark variant="shiny" className="size-9 shrink-0" />
+                    <YadonMark variant="shiny" className="size-11 shrink-0" />
                   </div>
                 </CardHeader>
                 <CardContent className="relative grid gap-4">
@@ -2447,8 +2492,22 @@ export function KakeiboLiffApp() {
             className="fixed inset-x-0 bottom-[calc(6.5rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4"
           >
             <div className="chalk-frame flex items-center gap-3 bg-card/95 px-4 py-2 shadow-ledger">
-              <YadonMark variant="save" className="size-14" />
+              <YadonMark variant="save" className="size-16" />
               <p className="text-glow font-bold">保存が完了したよ！</p>
+            </div>
+          </div>
+        ) : null}
+
+        {errorToast ? (
+          <div
+            role="alert"
+            className="fixed inset-x-0 bottom-[calc(6.5rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4"
+          >
+            <div className="flex min-w-0 items-center gap-3 rounded-lg border-2 border-destructive/70 bg-card/95 px-4 py-3 shadow-ledger">
+              <XCircle className="size-6 shrink-0 text-destructive" aria-hidden="true" />
+              <p className="min-w-0 break-words font-bold text-destructive">
+                {errorToast}
+              </p>
             </div>
           </div>
         ) : null}
@@ -2500,7 +2559,7 @@ function EmptyState({
 }) {
   return (
     <div className="flex items-center gap-3 rounded-md border bg-background/70 p-4 text-sm text-muted-foreground">
-      <YadonMark variant={variant} className="size-9 shrink-0 opacity-80" />
+      <YadonMark variant={variant} className="size-11 shrink-0 opacity-80" />
       <span className="min-w-0">{children}</span>
     </div>
   );
@@ -2595,12 +2654,9 @@ function ReceiptNotePage({
               {monthLabel}
             </h2>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <YadonMark variant="shiny" className="size-9" />
-            <Badge variant="outline">
-              {confirmedCategoryCount}/{receiptNoteCategories.length} 全体確認
-            </Badge>
-          </div>
+          <Badge variant="outline">
+            {confirmedCategoryCount}/{receiptNoteCategories.length} 全体確認
+          </Badge>
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2">
           <div className="min-w-0 rounded-md border bg-background/70 p-3">
@@ -2661,7 +2717,7 @@ function ReceiptNotePage({
                 <ReceiptNoteUserSelect
                   id="receipt-note-add-user"
                   users={users}
-                  value={draft.userName || users[0]?.name || ""}
+                  value={draft.userName}
                   disabled={disabled}
                   onChange={(userName) =>
                     onDraftChange((current) => ({ ...current, userName }))
@@ -2673,14 +2729,18 @@ function ReceiptNotePage({
               <Input
                 id="receipt-note-add-amount"
                 type="number"
-                min={0}
+                min={1}
                 inputMode="numeric"
+                placeholder="1000"
                 value={draft.amount}
                 disabled={disabled}
                 onChange={(event) =>
                   onDraftChange((current) => ({
                     ...current,
-                    amount: Number(event.target.value),
+                    amount:
+                      event.target.value === ""
+                        ? ""
+                        : Number(event.target.value),
                   }))
                 }
               />
@@ -2740,7 +2800,7 @@ function ReceiptNoteCategorySelect({
   onChange,
 }: {
   id: string;
-  value: ReceiptNoteCategory;
+  value: ReceiptNoteCategory | "";
   disabled?: boolean;
   onChange: (value: ReceiptNoteCategory) => void;
 }) {
@@ -2752,6 +2812,9 @@ function ReceiptNoteCategorySelect({
       onChange={(event) => onChange(event.target.value as ReceiptNoteCategory)}
       className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
     >
+      <option value="" disabled>
+        選択してください
+      </option>
       {receiptNoteCategories.map((category) => (
         <option key={category.value} value={category.value}>
           {category.label}
@@ -2785,15 +2848,14 @@ function ReceiptNoteUserSelect({
       onChange={(event) => onChange(event.target.value)}
       className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
     >
-      {users.length ? (
-        users.map((user) => (
-          <option key={user.id} value={user.name}>
-            {user.name}
-          </option>
-        ))
-      ) : (
-        <option value="">未取得</option>
-      )}
+      <option value="" disabled>
+        選択してください
+      </option>
+      {users.map((user) => (
+        <option key={user.id} value={user.name}>
+          {user.name}
+        </option>
+      ))}
     </select>
   );
 }
@@ -3340,7 +3402,7 @@ function MetricCard({
             tone === "blue" && "bg-accent/10 text-accent",
           )}
         >
-          <YadonMark variant={yadon} className="size-9" />
+          <YadonMark variant={yadon} className="size-11" />
         </div>
         <div className="min-w-0">
           <p className="text-sm font-semibold text-muted-foreground">{label}</p>
@@ -3359,7 +3421,7 @@ function DiningBalanceCard({ users }: { users: DashboardData["users"] }) {
       <CardContent className="grid gap-4 p-5">
         <div className="flex items-center gap-4">
           <div className="grid size-12 shrink-0 place-items-center rounded-md bg-ledger-mint text-primary">
-            <YadonMark variant="save" className="size-9" />
+            <YadonMark variant="save" className="size-11" />
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-muted-foreground">外食残高</p>
@@ -3471,7 +3533,7 @@ function CategorySelect({
       className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
     >
       <option value="" disabled>
-        未設定
+        選択してください
       </option>
       {categories.map((category) => (
         <option key={category} value={category}>
@@ -3501,7 +3563,7 @@ function ExpenseForm({
             <CardTitle>手動追加</CardTitle>
             <CardDescription>支出・旅行費用</CardDescription>
           </div>
-          <YadonMark variant="front" className="size-9 shrink-0" />
+          <YadonMark variant="front" className="size-11 shrink-0" />
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -3535,13 +3597,15 @@ function ExpenseForm({
             <Input
               id="amount"
               type="number"
-              min={0}
+              min={1}
               inputMode="numeric"
+              placeholder="1000"
               value={draft.amount}
               onChange={(event) =>
                 onChange((current) => ({
                   ...current,
-                  amount: Number(event.target.value),
+                  amount:
+                    event.target.value === "" ? "" : Number(event.target.value),
                 }))
               }
             />

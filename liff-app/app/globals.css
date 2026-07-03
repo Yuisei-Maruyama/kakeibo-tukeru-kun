@@ -152,6 +152,23 @@ input[type="time"]::-webkit-date-and-time-value {
   border-radius: 15px 225px 15px 255px / 255px 15px 225px 15px;
 }
 
+/* 色チョークで枠線を彩る（黄 → ピンク → 水色 → 緑 の順に巡る） */
+.chalk-frame:nth-child(4n + 1) {
+  border-color: rgb(242 217 140 / 0.75);
+}
+
+.chalk-frame:nth-child(4n + 2) {
+  border-color: rgb(242 160 172 / 0.75);
+}
+
+.chalk-frame:nth-child(4n + 3) {
+  border-color: rgb(169 204 227 / 0.75);
+}
+
+.chalk-frame:nth-child(4n) {
+  border-color: rgb(168 213 186 / 0.75);
+}
+
 input[type="checkbox"].chalk-checkbox {
   appearance: none;
   display: grid;

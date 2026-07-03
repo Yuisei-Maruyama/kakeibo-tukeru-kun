@@ -19,7 +19,7 @@ function LoadingOverlay({
       className="absolute inset-0 z-10 grid place-items-center rounded-[inherit] bg-background/75"
     >
       <span className="flex items-center gap-2 font-display text-sm text-muted-foreground">
-        <YadonSpinner className="size-8" />
+        <YadonSpinner className="size-10" />
         {label}
       </span>
     </div>
