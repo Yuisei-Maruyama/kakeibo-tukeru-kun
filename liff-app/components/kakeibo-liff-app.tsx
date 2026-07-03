@@ -18,7 +18,6 @@ import {
   JapaneseYen,
   LineChart,
   ListChecks,
-  Loader2,
   Plus,
   ReceiptText,
   RefreshCw,
@@ -50,6 +49,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LoadingOverlay } from "@/components/ui/loading-overlay";
+import { YadonSpinner } from "@/components/ui/yadon-spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -437,6 +438,26 @@ export function KakeiboLiffApp() {
   const [receiptNoteConfirmations, setReceiptNoteConfirmations] = React.useState<
     Record<ReceiptNoteCategory, ReceiptNoteConfirmation>
   >(() => createReceiptNoteConfirmations(todayInputValue()));
+  const [showSaveToast, setShowSaveToast] = React.useState(false);
+  const saveToastTimerRef = React.useRef<number | null>(null);
+
+  const celebrateSave = React.useCallback(() => {
+    setShowSaveToast(true);
+    if (saveToastTimerRef.current) {
+      window.clearTimeout(saveToastTimerRef.current);
+    }
+    saveToastTimerRef.current = window.setTimeout(() => {
+      setShowSaveToast(false);
+    }, 3500);
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      if (saveToastTimerRef.current) {
+        window.clearTimeout(saveToastTimerRef.current);
+      }
+    };
+  }, []);
 
   React.useEffect(() => {
     let mounted = true;
@@ -806,6 +827,7 @@ export function KakeiboLiffApp() {
         setReceiptFile(null);
         setReceiptImageUrl(null);
         setToast(result.message);
+        celebrateSave();
       });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "画像登録に失敗しました");
@@ -844,6 +866,7 @@ export function KakeiboLiffApp() {
         setReportMode("history");
         setActiveTab("history");
         setToast(result.message);
+        celebrateSave();
       });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "支出の保存に失敗しました");
@@ -900,6 +923,7 @@ export function KakeiboLiffApp() {
         setDashboardUsers(result.users);
         setDashboard(null);
         setToast(result.message);
+        celebrateSave();
       });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "支出の更新に失敗しました");
@@ -936,6 +960,7 @@ export function KakeiboLiffApp() {
           endTime: "",
         }));
         setToast(result.message);
+        celebrateSave();
       });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "予定の保存に失敗しました");
@@ -963,6 +988,7 @@ export function KakeiboLiffApp() {
             .sort((a, b) => a.date.localeCompare(b.date)),
         );
         setToast(result.message);
+        celebrateSave();
       });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "予定の更新に失敗しました");
@@ -1021,6 +1047,7 @@ export function KakeiboLiffApp() {
         );
         setSubscriptionDraft(defaultSubscriptionDraft());
         setToast(result.message);
+        celebrateSave();
       });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "サブスクの保存に失敗しました");
@@ -1056,6 +1083,7 @@ export function KakeiboLiffApp() {
             .sort((a, b) => a.startDate.localeCompare(b.startDate)),
         );
         setToast(result.message);
+        celebrateSave();
       });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "サブスクの更新に失敗しました");
@@ -1104,6 +1132,7 @@ export function KakeiboLiffApp() {
         setRent(result.rent);
         setRentDraft(result.rent);
         setToast(result.message);
+        celebrateSave();
       });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "家賃の保存に失敗しました");
@@ -1162,6 +1191,7 @@ export function KakeiboLiffApp() {
             : current,
         );
         setToast(result.message);
+        celebrateSave();
       });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "予算変更に失敗しました");
@@ -1250,6 +1280,7 @@ export function KakeiboLiffApp() {
         amount: 0,
       }));
       setToast(result.message);
+      celebrateSave();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "受領ノートの保存に失敗しました");
     } finally {
@@ -1274,6 +1305,7 @@ export function KakeiboLiffApp() {
 
     try {
       await saveReceiptNoteRow(row, { amount: nextAmount });
+      celebrateSave();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
     } finally {
@@ -1290,6 +1322,7 @@ export function KakeiboLiffApp() {
 
     try {
       await saveReceiptNoteRow(row, { received: checked });
+      celebrateSave();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
     } finally {
@@ -1310,6 +1343,7 @@ export function KakeiboLiffApp() {
 
     try {
       await saveReceiptNoteRow(row, { category });
+      celebrateSave();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
     } finally {
@@ -1326,6 +1360,7 @@ export function KakeiboLiffApp() {
 
     try {
       await saveReceiptNoteRow(row, { userName });
+      celebrateSave();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
     } finally {
@@ -1407,6 +1442,7 @@ export function KakeiboLiffApp() {
         },
       }));
       setToast(result.message);
+      celebrateSave();
     } catch (error) {
       setToast(
         error instanceof Error
@@ -1418,8 +1454,20 @@ export function KakeiboLiffApp() {
     }
   }
 
+  if (isInitializing) {
+    return (
+      <main className="chalkboard grid min-h-dvh place-items-center text-foreground">
+        <div className="flex flex-col items-center gap-3">
+          <YadonSpinner className="size-12" />
+          <p className="text-glow text-xl">準備中…</p>
+          <p className="text-sm text-muted-foreground">LIFFを確認しています</p>
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <main className="ledger-grid min-h-dvh bg-background px-3 pb-[calc(6.75rem+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)] text-foreground">
+    <main className="chalkboard min-h-dvh px-3 pb-[calc(6.75rem+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)] text-foreground">
       <div className="mx-auto flex w-full max-w-md flex-col gap-4">
         <header className="sticky top-0 z-30 -mx-3 border-b bg-background/95 px-3 py-2 backdrop-blur-xl">
           <div className="mx-auto flex w-full max-w-md items-center justify-between gap-2">
@@ -1454,11 +1502,7 @@ export function KakeiboLiffApp() {
                 disabled={isLoadingDashboard}
                 onClick={() => void loadDashboard()}
               >
-                {isLoadingDashboard ? (
-                  <Loader2 className="animate-spin" aria-hidden="true" />
-                ) : (
-                  <RefreshCw aria-hidden="true" />
-                )}
+                <ButtonIcon busy={isLoadingDashboard} icon={RefreshCw} />
               </Button>
               <Button
                 type="button"
@@ -1476,14 +1520,14 @@ export function KakeiboLiffApp() {
 
         <section
           aria-live="polite"
-          className="rounded-md border bg-card/95 px-4 py-3 text-sm shadow-ledger"
+          className="chalk-frame bg-card/95 px-4 py-3 text-sm shadow-ledger"
         >
           <div className="flex items-start gap-2">
             <CheckCircle2 className="size-4 text-primary" aria-hidden="true" />
             <div className="min-w-0">
               <p className="break-words font-semibold">{toast}</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                {isInitializing ? "LIFFを確認中" : liffSession.message}
+                {liffSession.message}
               </p>
             </div>
           </div>
@@ -1493,7 +1537,7 @@ export function KakeiboLiffApp() {
           {activeTab === "home" ? (
           <TabsContent value="home">
             <div className="grid gap-4">
-              <section className="rounded-lg border bg-card p-4 shadow-ledger">
+              <section className="chalk-frame bg-card p-4 shadow-ledger">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-muted-foreground">
@@ -1537,7 +1581,8 @@ export function KakeiboLiffApp() {
                 </div>
               </section>
 
-              <section className="grid gap-3">
+              <section className="relative grid gap-3">
+                <LoadingOverlay show={isLoadingDashboard} />
                 <div className="flex flex-wrap items-end justify-between gap-2 px-1">
                   <div className="min-w-0">
                     <p className="text-xs font-bold text-muted-foreground">
@@ -1582,7 +1627,10 @@ export function KakeiboLiffApp() {
                         disabled={isSending && Boolean(tile.command)}
                         onClick={() => handleCommandTile(tile)}
                       >
-                        <tile.icon aria-hidden="true" />
+                        <ButtonIcon
+                          busy={isSending && Boolean(tile.command)}
+                          icon={tile.icon}
+                        />
                         <span className="min-w-0 truncate">{tile.label}</span>
                       </Button>
                     ))}
@@ -1597,7 +1645,8 @@ export function KakeiboLiffApp() {
                     Firestore / Google Calendar
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+                <CardContent className="relative grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+                  <LoadingOverlay show={isLoadingDashboard} />
                   <div className="grid gap-3">
                     <div className="grid min-w-0 gap-2">
                       <Label htmlFor="dashboard-month-label">表示月</Label>
@@ -1615,7 +1664,7 @@ export function KakeiboLiffApp() {
                         </Button>
                         <div
                           id="dashboard-month-label"
-                          className="text-glow flex h-12 min-w-0 items-center justify-center rounded-md border border-input bg-card px-3 text-base font-bold shadow-[inset_0_0_18px_rgba(45,212,191,0.05)]"
+                          className="text-glow flex h-12 min-w-0 items-center justify-center rounded-md border border-input bg-card px-3 text-base font-bold shadow-chalk-inset"
                         >
                           <span className="truncate">
                             {formatYearMonthLabel(dashboardMonth)}
@@ -1739,11 +1788,7 @@ export function KakeiboLiffApp() {
                       disabled={isAnalyzingImage || !receiptFile}
                       onClick={() => void submitReceiptImage()}
                     >
-                      {isAnalyzingImage ? (
-                        <Loader2 className="animate-spin" aria-hidden="true" />
-                      ) : (
-                        <Camera aria-hidden="true" />
-                      )}
+                      <ButtonIcon busy={isAnalyzingImage} icon={Camera} />
                       画像登録
                     </Button>
                   </CardContent>
@@ -1784,11 +1829,10 @@ export function KakeiboLiffApp() {
                       disabled={isLoadingDashboard}
                       onClick={() => showReport("history")}
                     >
-                      {isLoadingDashboard && reportMode === "history" ? (
-                        <Loader2 className="animate-spin" aria-hidden="true" />
-                      ) : (
-                        <ClipboardList aria-hidden="true" />
-                      )}
+                      <ButtonIcon
+                        busy={isLoadingDashboard && reportMode === "history"}
+                        icon={ClipboardList}
+                      />
                       履歴
                     </Button>
                     <Button
@@ -1797,11 +1841,10 @@ export function KakeiboLiffApp() {
                       disabled={isLoadingDashboard}
                       onClick={() => showReport("summary")}
                     >
-                      {isLoadingDashboard && reportMode === "summary" ? (
-                        <Loader2 className="animate-spin" aria-hidden="true" />
-                      ) : (
-                        <ChartNoAxesCombined aria-hidden="true" />
-                      )}
+                      <ButtonIcon
+                        busy={isLoadingDashboard && reportMode === "summary"}
+                        icon={ChartNoAxesCombined}
+                      />
                       集計
                     </Button>
                   </div>
@@ -1819,7 +1862,8 @@ export function KakeiboLiffApp() {
                       : `${formatYearMonthLabel(dashboardMonth)} の支出合計`}
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="relative">
+                  <LoadingOverlay show={isLoadingDashboard} />
                   {reportMode === "history" ? (
                     <Tabs
                       value={expenseCategoryFilter}
@@ -1981,7 +2025,7 @@ export function KakeiboLiffApp() {
                     disabled={isMutating}
                     onClick={() => void addSchedule()}
                   >
-                    <CalendarDays aria-hidden="true" />
+                    <ButtonIcon busy={isMutating} icon={CalendarDays} />
                     予定登録
                   </Button>
                 </CardContent>
@@ -1992,7 +2036,8 @@ export function KakeiboLiffApp() {
                   <CardTitle>Calendar</CardTitle>
                   <CardDescription>Google Calendar の予定</CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="relative">
+                  <LoadingOverlay show={isLoadingDashboard} />
                   <CalendarEventList
                     events={calendarEvents.slice(0, 5)}
                     disabled={isMutating}
@@ -2013,7 +2058,8 @@ export function KakeiboLiffApp() {
                   <CardTitle>Firestore</CardTitle>
                   <CardDescription>ユーザー・固定費</CardDescription>
                 </CardHeader>
-                <CardContent className="grid gap-4">
+                <CardContent className="relative grid gap-4">
+                  <LoadingOverlay show={isLoadingDashboard} />
                   <div className="grid gap-3">
                     {visibleDashboardUsers.map((user) => (
                       <div
@@ -2076,7 +2122,7 @@ export function KakeiboLiffApp() {
                     disabled={isMutating}
                     onClick={() => void updateBudget()}
                   >
-                    <WalletCards aria-hidden="true" />
+                    <ButtonIcon busy={isMutating} icon={WalletCards} />
                     予算変更
                   </Button>
                 </CardContent>
@@ -2200,7 +2246,7 @@ export function KakeiboLiffApp() {
                     disabled={isMutating}
                     onClick={() => void addSubscription()}
                   >
-                    <Plus aria-hidden="true" />
+                    <ButtonIcon busy={isMutating} icon={Plus} />
                     追加
                   </Button>
                 </CardContent>
@@ -2240,7 +2286,7 @@ export function KakeiboLiffApp() {
                   </Field>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Button type="button" disabled={isMutating} onClick={() => void updateRent()}>
-                      <JapaneseYen aria-hidden="true" />
+                      <ButtonIcon busy={isMutating} icon={JapaneseYen} />
                       更新
                     </Button>
                     <Button
@@ -2249,7 +2295,7 @@ export function KakeiboLiffApp() {
                       disabled={isMutating}
                       onClick={() => void clearRent()}
                     >
-                      <Trash2 aria-hidden="true" />
+                      <ButtonIcon busy={isMutating} icon={Trash2} />
                       削除
                     </Button>
                   </div>
@@ -2261,7 +2307,8 @@ export function KakeiboLiffApp() {
                   <CardTitle>サブスク</CardTitle>
                   <CardDescription>Firestore の定期支払い</CardDescription>
                 </CardHeader>
-                <CardContent className="grid gap-3 sm:grid-cols-2">
+                <CardContent className="relative grid gap-3 sm:grid-cols-2">
+                  <LoadingOverlay show={isLoadingDashboard} />
                   {subscriptions.map((subscription) => (
                     <SubscriptionRow
                       key={subscription.id}
@@ -2308,22 +2355,55 @@ export function KakeiboLiffApp() {
 
           <TabsList
             aria-label="主要ナビゲーション"
-            className="fixed inset-x-0 bottom-0 z-40 mx-auto grid w-full max-w-md grid-cols-5 gap-1 rounded-none border-t bg-card/95 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 shadow-[0_-18px_40px_rgba(18,61,53,0.14)] backdrop-blur-xl"
+            className="fixed inset-x-0 bottom-0 z-40 mx-auto grid w-full max-w-md grid-cols-5 gap-1 rounded-none border-t bg-card/95 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 shadow-[0_-14px_36px_rgba(0,0,0,0.45)] backdrop-blur-xl"
           >
             {navigationItems.map((item) => (
               <TabsTrigger
                 key={item.value}
                 value={item.value}
-                className="min-h-14 flex-col gap-1 rounded-md border border-transparent px-1 py-2 text-[0.68rem] leading-none transition-[background-color,border-color,box-shadow,color,transform] active:scale-[0.98] data-[state=active]:border-primary/45 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-[0_0_18px_rgba(45,212,191,0.28),inset_0_0_16px_rgba(45,212,191,0.10)] data-[state=active]:[text-shadow:0_0_12px_rgba(45,212,191,0.90)] data-[state=active]:[&_svg]:scale-110 data-[state=active]:[&_svg]:drop-shadow-[0_0_8px_rgba(45,212,191,0.95)] [&_svg]:size-5 [&_svg]:transition-[filter,transform]"
+                className="min-h-14 min-w-0 flex-col gap-1 rounded-md border border-transparent px-1 py-2 text-[0.68rem] leading-none transition-[background-color,border-color,box-shadow,color,transform] active:scale-[0.98] data-[state=active]:border-primary/45 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[text-shadow:0_0_8px_rgba(242,217,140,0.45)] data-[state=active]:[&_svg]:scale-110 data-[state=active]:[&_svg]:drop-shadow-[0_0_4px_rgba(242,217,140,0.5)] [&_svg]:size-5 [&_svg]:transition-[filter,transform]"
               >
                 <item.icon className="mr-0 size-5" aria-hidden="true" />
-                <span>{item.label}</span>
+                <span className="w-full min-w-0 truncate text-center">{item.label}</span>
               </TabsTrigger>
             ))}
           </TabsList>
         </Tabs>
+
+        {showSaveToast ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="fixed inset-x-0 bottom-[calc(6.5rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4"
+          >
+            <div className="chalk-frame flex items-center gap-3 bg-card/95 px-4 py-2 shadow-ledger">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/yadon-save.gif"
+                alt=""
+                aria-hidden="true"
+                className="size-14 object-contain [image-rendering:pixelated]"
+              />
+              <p className="text-glow font-bold">保存が完了したよ！</p>
+            </div>
+          </div>
+        ) : null}
       </div>
     </main>
+  );
+}
+
+function ButtonIcon({
+  busy,
+  icon: Icon,
+}: {
+  busy?: boolean;
+  icon: React.ElementType;
+}) {
+  return busy ? (
+    <YadonSpinner className="size-5" />
+  ) : (
+    <Icon aria-hidden="true" />
   );
 }
 
@@ -2392,7 +2472,7 @@ function ReceiptNotePage({
 
   return (
     <div className="grid gap-4">
-      <section className="rounded-lg border bg-card p-4 shadow-ledger">
+      <section className="chalk-frame bg-card p-4 shadow-ledger">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-muted-foreground">対象月</p>
@@ -2470,7 +2550,7 @@ function ReceiptNotePage({
             </Field>
           </div>
           <Button type="button" disabled={disabled} onClick={onAddRow}>
-            <Plus aria-hidden="true" />
+            <ButtonIcon busy={disabled} icon={Plus} />
             追加
           </Button>
         </CardContent>
@@ -2532,7 +2612,7 @@ function ReceiptNoteCategorySelect({
       value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value as ReceiptNoteCategory)}
-      className="h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+      className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
     >
       {receiptNoteCategories.map((category) => (
         <option key={category.value} value={category.value}>
@@ -2545,12 +2625,14 @@ function ReceiptNoteCategorySelect({
 
 function ReceiptNoteUserSelect({
   id,
+  name,
   users,
   value,
   disabled = false,
   onChange,
 }: {
   id: string;
+  name?: string;
   users: ReceiptNoteUser[];
   value: string;
   disabled?: boolean;
@@ -2559,10 +2641,11 @@ function ReceiptNoteUserSelect({
   return (
     <select
       id={id}
+      name={name}
       value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
-      className="h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+      className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
     >
       {users.length ? (
         users.map((user) => (
@@ -2707,7 +2790,7 @@ function ReceiptNoteCategoryCard({
                     onChange={(event) =>
                       onReceivedChange(row, event.target.checked)
                     }
-                    className="size-5 shrink-0"
+                    className="chalk-checkbox size-5 shrink-0"
                   />
                   <span>受領完了</span>
                 </label>
@@ -2718,7 +2801,7 @@ function ReceiptNoteCategoryCard({
                   disabled={disabled}
                   onClick={() => onDeleteRow(row)}
                 >
-                  <Trash2 aria-hidden="true" />
+                  <ButtonIcon busy={disabled} icon={Trash2} />
                   削除
                 </Button>
               </div>
@@ -2735,28 +2818,16 @@ function ReceiptNoteCategoryCard({
           <legend className="sr-only">{summary.label}の全体確認</legend>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="確認者" htmlFor={`${summary.value}-confirmed-by`}>
-              <select
+              <ReceiptNoteUserSelect
                 id={`${summary.value}-confirmed-by`}
                 name={`${summary.value}-confirmed-by`}
+                users={users}
                 value={confirmedBy}
                 disabled={disabled}
-                onChange={(event) =>
-                  onConfirmationChange(summary.value, {
-                    confirmedBy: event.target.value,
-                  })
+                onChange={(value) =>
+                  onConfirmationChange(summary.value, { confirmedBy: value })
                 }
-                className="h-12 w-full min-w-0 rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
-              >
-                {users.length ? (
-                  users.map((user) => (
-                    <option key={user.id} value={user.name}>
-                      {user.name}
-                    </option>
-                  ))
-                ) : (
-                  <option value="">未取得</option>
-                )}
-              </select>
+              />
             </Field>
             <Field label="確認日" htmlFor={`${summary.value}-confirmed-date`}>
               <Input
@@ -2785,7 +2856,7 @@ function ReceiptNoteCategoryCard({
                   confirmedBy,
                 })
               }
-              className="size-5 shrink-0"
+              className="chalk-checkbox size-5 shrink-0"
             />
             <span className="min-w-0">
               <span className="block">全体確認済み</span>
@@ -2947,7 +3018,7 @@ function CalendarEventItem({
                     disabled={disabled}
                     onClick={() => onUpdate?.(event, draft)}
                   >
-                    <Send aria-hidden="true" />
+                    <ButtonIcon busy={disabled} icon={Send} />
                     更新
                   </Button>
                 </DialogClose>
@@ -2962,7 +3033,7 @@ function CalendarEventItem({
             disabled={disabled}
             onClick={() => onDelete?.(event)}
           >
-            <Trash2 aria-hidden="true" />
+            <ButtonIcon busy={disabled} icon={Trash2} />
           </Button>
         </div>
       ) : null}
@@ -3134,7 +3205,7 @@ function CategorySelect({
       id={id}
       value={value}
       onChange={(event) => onChange(event.target.value as ExpenseCategory)}
-      className="h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+      className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
     >
       {categories.map((category) => (
         <option key={category} value={category}>
@@ -3234,7 +3305,7 @@ function ExpenseForm({
           />
         </Field>
         <Button type="button" disabled={disabled} onClick={onSubmit}>
-          <Send aria-hidden="true" />
+          <ButtonIcon busy={disabled} icon={Send} />
           登録
         </Button>
       </CardContent>
@@ -3359,7 +3430,7 @@ function SubscriptionRow({
                   disabled={disabled}
                   onClick={() => onUpdate(subscription, draft)}
                 >
-                  <Send aria-hidden="true" />
+                  <ButtonIcon busy={disabled} icon={Send} />
                   更新
                 </Button>
               </DialogClose>
@@ -3374,7 +3445,7 @@ function SubscriptionRow({
           disabled={disabled}
           onClick={() => onDelete(subscription)}
         >
-          <Trash2 aria-hidden="true" />
+          <ButtonIcon busy={disabled} icon={Trash2} />
         </Button>
       </div>
     </article>
@@ -3399,7 +3470,7 @@ function ExpenseRow({
   }, [expense]);
 
   return (
-    <article className="grid gap-3 rounded-lg border bg-background/65 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
+    <article className="grid gap-3 rounded-lg border bg-background/70 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
       <div className="min-w-0">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <Badge variant={expense.category === "外食費用" ? "default" : "secondary"}>
@@ -3516,7 +3587,7 @@ function ExpenseRow({
                   disabled={disabled}
                   onClick={() => onUpdate(expense, draft)}
                 >
-                  <Send aria-hidden="true" />
+                  <ButtonIcon busy={disabled} icon={Send} />
                   更新
                 </Button>
               </DialogClose>
@@ -3531,7 +3602,7 @@ function ExpenseRow({
           disabled={disabled}
           onClick={() => onDelete(expense)}
         >
-          <Trash2 aria-hidden="true" />
+          <ButtonIcon busy={disabled} icon={Trash2} />
         </Button>
       </div>
     </article>

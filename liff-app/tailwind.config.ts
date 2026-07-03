@@ -39,23 +39,11 @@ const config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        ledger: {
-          ink: "#123D35",
-          green: "#0F766E",
-          mint: "#DDF7EC",
-          paper: "#F8FAF6",
-          coin: "#B7791F",
-          coral: "#B42318",
-          blue: "#006CA8",
-        },
       },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
-      },
-      boxShadow: {
-        ledger: "0 18px 50px rgba(18, 61, 53, 0.10)",
       },
     },
   },
