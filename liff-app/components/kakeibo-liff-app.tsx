@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import {
-  Banknote,
   CalendarDays,
   Camera,
   ChartNoAxesCombined,
@@ -17,7 +16,6 @@ import {
   Home,
   ImagePlus,
   JapaneseYen,
-  LineChart,
   ListChecks,
   Plus,
   ReceiptText,
@@ -1658,13 +1656,13 @@ export function KakeiboLiffApp() {
                 <MetricCard
                   label="買い物合計"
                   value={formatCurrency(totals.shopping)}
-                  icon={Banknote}
+                  yadon="back"
                   tone="coin"
                 />
                 <MetricCard
                   label="旅行費用"
                   value={formatCurrency(totals.travel)}
-                  icon={LineChart}
+                  yadon="galar"
                   tone="blue"
                 />
               </section>
@@ -1868,8 +1866,13 @@ export function KakeiboLiffApp() {
             <div className="grid gap-5 lg:grid-cols-[1fr_2fr]">
               <Card>
                 <CardHeader>
-                  <CardTitle>履歴取得</CardTitle>
-                  <CardDescription>月指定</CardDescription>
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <CardTitle>履歴取得</CardTitle>
+                      <CardDescription>月指定</CardDescription>
+                    </div>
+                    <YadonMark variant="back" className="size-9 shrink-0" />
+                  </div>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-4">
                   <Field label="対象年月" htmlFor="report-month">
@@ -2009,8 +2012,13 @@ export function KakeiboLiffApp() {
             <div className="grid gap-5">
               <Card>
                 <CardHeader>
-                  <CardTitle>予定登録</CardTitle>
-                  <CardDescription>Google カレンダー連携</CardDescription>
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <CardTitle>予定登録</CardTitle>
+                      <CardDescription>Google カレンダー連携</CardDescription>
+                    </div>
+                    <YadonMark variant="galar" className="size-9 shrink-0" />
+                  </div>
                 </CardHeader>
                 <CardContent className="grid gap-4">
                   <div className="grid gap-4 sm:grid-cols-2">
@@ -2113,8 +2121,13 @@ export function KakeiboLiffApp() {
             <div className="grid gap-5 lg:grid-cols-2">
               <Card>
                 <CardHeader>
-                  <CardTitle>Firestore</CardTitle>
-                  <CardDescription>ユーザー・固定費</CardDescription>
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <CardTitle>Firestore</CardTitle>
+                      <CardDescription>ユーザー・固定費</CardDescription>
+                    </div>
+                    <YadonMark variant="shiny" className="size-9 shrink-0" />
+                  </div>
                 </CardHeader>
                 <CardContent className="relative grid gap-4">
                   <LoadingOverlay show={isLoadingDashboard} />
@@ -2582,9 +2595,12 @@ function ReceiptNotePage({
               {monthLabel}
             </h2>
           </div>
-          <Badge variant="outline">
-            {confirmedCategoryCount}/{receiptNoteCategories.length} 全体確認
-          </Badge>
+          <div className="flex shrink-0 items-center gap-2">
+            <YadonMark variant="shiny" className="size-9" />
+            <Badge variant="outline">
+              {confirmedCategoryCount}/{receiptNoteCategories.length} 全体確認
+            </Badge>
+          </div>
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2">
           <div className="min-w-0 rounded-md border bg-background/70 p-3">
@@ -3305,12 +3321,12 @@ function isManagedScheduleEvent(event: AppCalendarEvent) {
 function MetricCard({
   label,
   value,
-  icon: Icon,
+  yadon,
   tone,
 }: {
   label: string;
   value: string;
-  icon: React.ElementType;
+  yadon: YadonVariant;
   tone: "green" | "coin" | "blue";
 }) {
   return (
@@ -3324,7 +3340,7 @@ function MetricCard({
             tone === "blue" && "bg-accent/10 text-accent",
           )}
         >
-          <Icon className="size-6" aria-hidden="true" />
+          <YadonMark variant={yadon} className="size-9" />
         </div>
         <div className="min-w-0">
           <p className="text-sm font-semibold text-muted-foreground">{label}</p>
@@ -3343,7 +3359,7 @@ function DiningBalanceCard({ users }: { users: DashboardData["users"] }) {
       <CardContent className="grid gap-4 p-5">
         <div className="flex items-center gap-4">
           <div className="grid size-12 shrink-0 place-items-center rounded-md bg-ledger-mint text-primary">
-            <WalletCards className="size-6" aria-hidden="true" />
+            <YadonMark variant="save" className="size-9" />
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-muted-foreground">外食残高</p>
@@ -3480,8 +3496,13 @@ function ExpenseForm({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>手動追加</CardTitle>
-        <CardDescription>支出・旅行費用</CardDescription>
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle>手動追加</CardTitle>
+            <CardDescription>支出・旅行費用</CardDescription>
+          </div>
+          <YadonMark variant="front" className="size-9 shrink-0" />
+        </div>
       </CardHeader>
       <CardContent className="grid gap-4">
         <div className="grid gap-4 sm:grid-cols-2">
