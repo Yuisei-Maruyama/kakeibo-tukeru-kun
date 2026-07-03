@@ -1504,8 +1504,8 @@ export function KakeiboLiffApp() {
         <header className="sticky top-0 z-30 -mx-3 border-b bg-background/95 px-3 py-2 backdrop-blur-xl">
           <div className="mx-auto flex w-full max-w-md items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
-              <div className="grid size-10 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground shadow-ledger">
-                <ReceiptText className="size-5" aria-hidden="true" />
+              <div className="grid size-10 shrink-0 place-items-center rounded-md border border-yadon/60 bg-yadon/15 shadow-ledger">
+                <YadonMark className="size-8" />
               </div>
               <div className="min-w-0">
                 <h1 className="truncate text-lg font-black leading-tight tracking-normal">
@@ -1562,6 +1562,7 @@ export function KakeiboLiffApp() {
                 {liffSession.message}
               </p>
             </div>
+            <YadonMark className="ml-auto size-8 shrink-0 self-center" />
           </div>
         </section>
 
@@ -1572,7 +1573,7 @@ export function KakeiboLiffApp() {
               <section className="chalk-frame bg-card p-4 shadow-ledger">
                 <div className="flex min-w-0 items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-muted-foreground">
+                    <p className="text-sm font-semibold text-yadon">
                       今すぐ記録
                     </p>
                     <h2 className="mt-1 text-2xl font-black leading-tight">
@@ -1639,7 +1640,7 @@ export function KakeiboLiffApp() {
                 <LoadingOverlay show={isLoadingDashboard} />
                 <div className="flex flex-wrap items-end justify-between gap-2 px-1">
                   <div className="min-w-0">
-                    <p className="text-xs font-bold text-muted-foreground">
+                    <p className="text-xs font-bold text-yadon">
                       対象月
                     </p>
                     <h2 className="truncate text-xl font-black tracking-normal">
@@ -1818,7 +1819,7 @@ export function KakeiboLiffApp() {
                         />
                       ) : (
                         <>
-                          <ImagePlus className="size-10 text-primary" aria-hidden="true" />
+                          <YadonMark className="size-14" />
                           <span className="font-semibold">写真を追加</span>
                         </>
                       )}
@@ -1980,9 +1981,7 @@ export function KakeiboLiffApp() {
                             />
                           ))}
                           {filteredExpenses.length === 0 ? (
-                            <div className="rounded-md border bg-background/70 p-4 text-sm text-muted-foreground">
-                              条件に一致する支出はありません
-                            </div>
+                            <EmptyState>条件に一致する支出はありません</EmptyState>
                           ) : null}
                         </div>
                       </TabsContent>
@@ -2129,9 +2128,7 @@ export function KakeiboLiffApp() {
                       </div>
                     ))}
                     {visibleDashboardUsers.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        実データ未取得
-                      </p>
+                      <EmptyState>実データ未取得</EmptyState>
                     ) : null}
                   </div>
                   <div className="rounded-md border bg-background/70 p-3 text-sm">
@@ -2373,9 +2370,7 @@ export function KakeiboLiffApp() {
                     />
                   ))}
                   {subscriptions.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      サブスクは未取得または未登録です
-                    </p>
+                    <EmptyState>サブスクは未取得または未登録です</EmptyState>
                   ) : null}
                 </CardContent>
               </Card>
@@ -2445,6 +2440,32 @@ export function KakeiboLiffApp() {
         ) : null}
       </div>
     </main>
+  );
+}
+
+// マスコット（ヤドン）のドット絵画像
+function YadonMark({ className }: { className?: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/yadon-save.gif"
+      alt=""
+      aria-hidden="true"
+      className={cn(
+        "select-none object-contain [image-rendering:pixelated]",
+        className,
+      )}
+    />
+  );
+}
+
+// ヤドン付きの空状態表示
+function EmptyState({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 rounded-md border bg-background/70 p-4 text-sm text-muted-foreground">
+      <YadonMark className="size-9 shrink-0 opacity-80" />
+      <span className="min-w-0">{children}</span>
+    </div>
   );
 }
 
@@ -2532,7 +2553,7 @@ function ReceiptNotePage({
       <section className="chalk-frame bg-card p-4 shadow-ledger">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-muted-foreground">対象月</p>
+            <p className="text-sm font-semibold text-yadon">対象月</p>
             <h2 className="mt-1 truncate text-2xl font-black leading-tight">
               {monthLabel}
             </h2>
@@ -2827,9 +2848,7 @@ function ReceiptNoteCategoryCard({
             />
           ))}
           {summary.rows.length === 0 ? (
-            <div className="rounded-md border bg-background/70 p-4 text-sm text-muted-foreground">
-              このカテゴリーの明細はありません
-            </div>
+            <EmptyState>このカテゴリーの明細はありません</EmptyState>
           ) : null}
         </fieldset>
 
@@ -3090,9 +3109,7 @@ function CalendarEventList({
 }) {
   if (events.length === 0) {
     return (
-      <div className="rounded-md border bg-background/70 p-4 text-sm text-muted-foreground">
-        Calendar イベントは未取得または未登録です
-      </div>
+      <EmptyState>Calendar イベントは未取得または未登録です</EmptyState>
     );
   }
 
@@ -3326,9 +3343,7 @@ function DiningBalanceCard({ users }: { users: DashboardData["users"] }) {
               </div>
             ))
           ) : (
-            <div className="rounded-md border bg-background/70 px-3 py-2 text-sm font-semibold text-muted-foreground">
-              実データ未取得
-            </div>
+            <EmptyState>実データ未取得</EmptyState>
           )}
         </div>
       </CardContent>
