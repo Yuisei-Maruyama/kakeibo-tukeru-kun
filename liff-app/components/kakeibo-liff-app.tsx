@@ -1505,7 +1505,7 @@ export function KakeiboLiffApp() {
           <div className="mx-auto flex w-full max-w-md items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
               <div className="grid size-10 shrink-0 place-items-center rounded-md border border-yadon/60 bg-yadon/15 shadow-ledger">
-                <YadonMark className="size-8" />
+                <YadonMark variant="front" className="size-8" />
               </div>
               <div className="min-w-0">
                 <h1 className="truncate text-lg font-black leading-tight tracking-normal">
@@ -1562,7 +1562,10 @@ export function KakeiboLiffApp() {
                 {liffSession.message}
               </p>
             </div>
-            <YadonMark className="ml-auto size-8 shrink-0 self-center" />
+            <YadonMark
+              variant="animated"
+              className="ml-auto size-8 shrink-0 self-center"
+            />
           </div>
         </section>
 
@@ -1981,7 +1984,9 @@ export function KakeiboLiffApp() {
                             />
                           ))}
                           {filteredExpenses.length === 0 ? (
-                            <EmptyState>条件に一致する支出はありません</EmptyState>
+                            <EmptyState variant="back">
+                              条件に一致する支出はありません
+                            </EmptyState>
                           ) : null}
                         </div>
                       </TabsContent>
@@ -2128,7 +2133,7 @@ export function KakeiboLiffApp() {
                       </div>
                     ))}
                     {visibleDashboardUsers.length === 0 ? (
-                      <EmptyState>実データ未取得</EmptyState>
+                      <EmptyState variant="shiny">実データ未取得</EmptyState>
                     ) : null}
                   </div>
                   <div className="rounded-md border bg-background/70 p-3 text-sm">
@@ -2370,7 +2375,9 @@ export function KakeiboLiffApp() {
                     />
                   ))}
                   {subscriptions.length === 0 ? (
-                    <EmptyState>サブスクは未取得または未登録です</EmptyState>
+                    <EmptyState variant="galar">
+                      サブスクは未取得または未登録です
+                    </EmptyState>
                   ) : null}
                 </CardContent>
               </Card>
@@ -2427,13 +2434,7 @@ export function KakeiboLiffApp() {
             className="fixed inset-x-0 bottom-[calc(6.5rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4"
           >
             <div className="chalk-frame flex items-center gap-3 bg-card/95 px-4 py-2 shadow-ledger">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/yadon-save.gif"
-                alt=""
-                aria-hidden="true"
-                className="size-14 object-contain [image-rendering:pixelated]"
-              />
+              <YadonMark variant="save" className="size-14" />
               <p className="text-glow font-bold">保存が完了したよ！</p>
             </div>
           </div>
@@ -2443,12 +2444,29 @@ export function KakeiboLiffApp() {
   );
 }
 
-// マスコット（ヤドン）のドット絵画像
-function YadonMark({ className }: { className?: string }) {
+// マスコット（ヤドン）のドット絵画像（場所ごとにバリエーションを使い分ける）
+const yadonImages = {
+  save: "/yadon-save.gif",
+  front: "/yadon-front.png",
+  back: "/yadon-back.png",
+  shiny: "/yadon-shiny.png",
+  galar: "/yadon-galar.png",
+  animated: "/yadon-animated.gif",
+} as const;
+
+type YadonVariant = keyof typeof yadonImages;
+
+function YadonMark({
+  variant = "save",
+  className,
+}: {
+  variant?: YadonVariant;
+  className?: string;
+}) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src="/yadon-save.gif"
+      src={yadonImages[variant]}
       alt=""
       aria-hidden="true"
       className={cn(
@@ -2460,10 +2478,16 @@ function YadonMark({ className }: { className?: string }) {
 }
 
 // ヤドン付きの空状態表示
-function EmptyState({ children }: { children: React.ReactNode }) {
+function EmptyState({
+  variant,
+  children,
+}: {
+  variant?: YadonVariant;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-center gap-3 rounded-md border bg-background/70 p-4 text-sm text-muted-foreground">
-      <YadonMark className="size-9 shrink-0 opacity-80" />
+      <YadonMark variant={variant} className="size-9 shrink-0 opacity-80" />
       <span className="min-w-0">{children}</span>
     </div>
   );
@@ -2848,7 +2872,7 @@ function ReceiptNoteCategoryCard({
             />
           ))}
           {summary.rows.length === 0 ? (
-            <EmptyState>このカテゴリーの明細はありません</EmptyState>
+            <EmptyState variant="front">このカテゴリーの明細はありません</EmptyState>
           ) : null}
         </fieldset>
 
@@ -3109,7 +3133,9 @@ function CalendarEventList({
 }) {
   if (events.length === 0) {
     return (
-      <EmptyState>Calendar イベントは未取得または未登録です</EmptyState>
+      <EmptyState variant="animated">
+        Calendar イベントは未取得または未登録です
+      </EmptyState>
     );
   }
 
