@@ -8,7 +8,7 @@ import {
   getErrorMessage,
   getFirestore,
   mapReceiptNoteForClient,
-  resolveUserByName,
+  resolveReceiptNoteUser,
 } from "@/lib/liff-server";
 
 export const runtime = "nodejs";
@@ -52,7 +52,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     ensureGroupReceiptNoteAccess(before, authorizedContext);
 
     const body = parseReceiptNoteBody((await request.json()) as ReceiptNoteRequestBody);
-    const user = resolveUserByName(body.userName, authorizedContext);
+    const user = resolveReceiptNoteUser(body, authorizedContext);
     const updates = {
       category: body.category,
       userId: user.id,

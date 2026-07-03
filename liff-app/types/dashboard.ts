@@ -50,7 +50,8 @@ export type DashboardRent = {
 export type ReceiptNoteCategory =
   | "diningSaving"
   | "shoppingSettlement"
-  | "travelSettlement";
+  | "travelSettlement"
+  | "other";
 
 export type DashboardReceiptNote = {
   id: string;

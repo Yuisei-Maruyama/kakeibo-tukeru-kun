@@ -75,7 +75,9 @@ import type {
   ReceiptNoteCategory,
 } from "@/types/dashboard";
 
-type DraftExpense = Omit<Expense, "id">;
+type DraftExpense = Omit<Expense, "id" | "category"> & {
+  category: ExpenseCategory | "";
+};
 type AppCalendarEvent = DashboardData["calendarEvents"][number];
 type AppSubscription = DashboardData["subscriptions"][number];
 type DraftSubscription = Pick<
@@ -170,13 +172,19 @@ const receiptNoteCategories: {
     description: "旅行費用のユーザー別合計",
     expenseCategory: "旅行費用",
   },
+  {
+    value: "other",
+    label: "その他",
+    description: "タイトルと金額を自由に設定",
+  },
 ];
 
 const receiptNoteFilters: { value: ReceiptNoteFilter; label: string }[] = [
   { value: "all", label: "すべて" },
-  { value: "diningSaving", label: "外食貯金" },
-  { value: "shoppingSettlement", label: "買い物精算" },
-  { value: "travelSettlement", label: "旅行精算" },
+  { value: "diningSaving", label: "外食" },
+  { value: "shoppingSettlement", label: "買い物" },
+  { value: "travelSettlement", label: "旅行" },
+  { value: "other", label: "その他" },
 ];
 
 const initialExpenses: Expense[] = [
@@ -208,7 +216,7 @@ const initialExpenses: Expense[] = [
 
 const defaultDraft = (): DraftExpense => ({
   date: todayInputValue(),
-  category: "外食費用",
+  category: "",
   payer: "@自分",
   amount: 1280,
   storeName: "手動入力",
@@ -299,6 +307,7 @@ function createReceiptNoteConfirmations(
     diningSaving: { confirmedBy: "", date, checked: false },
     shoppingSettlement: { confirmedBy: "", date, checked: false },
     travelSettlement: { confirmedBy: "", date, checked: false },
+    other: { confirmedBy: "", date, checked: false },
   };
 }
 
@@ -440,6 +449,7 @@ export function KakeiboLiffApp() {
   >(() => createReceiptNoteConfirmations(todayInputValue()));
   const [showSaveToast, setShowSaveToast] = React.useState(false);
   const saveToastTimerRef = React.useRef<number | null>(null);
+  const cameraInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const celebrateSave = React.useCallback(() => {
     setShowSaveToast(true);
@@ -635,7 +645,7 @@ export function KakeiboLiffApp() {
         category: receiptNote.category,
         user: {
           id: receiptNote.userId,
-          name: receiptNote.userName,
+          name: receiptNoteUserNames[receiptNote.id] ?? receiptNote.userName,
         },
         amount: receiptNoteAmounts[receiptNote.id] ?? receiptNote.amount,
         received: receiptNoteChecks[receiptNote.id] ?? receiptNote.received,
@@ -653,6 +663,11 @@ export function KakeiboLiffApp() {
     }
 
     for (const category of receiptNoteCategories) {
+      // その他など支出カテゴリーに紐付かないものは自動集計行を作らない
+      if (!category.expenseCategory) {
+        continue;
+      }
+
       for (const user of receiptNoteUsers) {
         const key = createReceiptNoteKey(category.value, user.name);
         if (
@@ -664,7 +679,7 @@ export function KakeiboLiffApp() {
         }
 
         const categoryExpenseKey = createReceiptExpenseKey(
-          category.expenseCategory ?? "外食費用",
+          category.expenseCategory,
           user.name,
         );
         const defaultAmount =
@@ -839,6 +854,11 @@ export function KakeiboLiffApp() {
   async function submitExpense() {
     if (!draftExpense.date || !draftExpense.storeName.trim()) {
       setToast("日付と内容を入力してください");
+      return;
+    }
+
+    if (!draftExpense.category) {
+      setToast("カテゴリーを選択してください");
       return;
     }
 
@@ -1248,10 +1268,14 @@ export function KakeiboLiffApp() {
   }
 
   async function addReceiptNoteRow() {
-    const userName =
-      receiptNoteDraft.userName.trim() || receiptNoteUsers[0]?.name || "@自分";
+    const isOther = receiptNoteDraft.category === "other";
+    const userName = isOther
+      ? receiptNoteDraft.userName.trim()
+      : receiptNoteDraft.userName.trim() || receiptNoteUsers[0]?.name || "@自分";
     if (!userName || !Number.isFinite(receiptNoteDraft.amount)) {
-      setToast("ユーザーと金額を入力してください");
+      setToast(
+        isOther ? "タイトルと金額を入力してください" : "ユーザーと金額を入力してください",
+      );
       return;
     }
 
@@ -1292,6 +1316,13 @@ export function KakeiboLiffApp() {
     setReceiptNoteAmounts((current) => ({
       ...current,
       [rowKey]: Number.isFinite(amount) ? Math.max(amount, 0) : 0,
+    }));
+  }
+
+  function draftReceiptNoteUserName(rowKey: string, userName: string) {
+    setReceiptNoteUserNames((current) => ({
+      ...current,
+      [rowKey]: userName,
     }));
   }
 
@@ -1538,7 +1569,7 @@ export function KakeiboLiffApp() {
           <TabsContent value="home">
             <div className="grid gap-4">
               <section className="chalk-frame bg-card p-4 shadow-ledger">
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-muted-foreground">
                       今すぐ記録
@@ -1555,7 +1586,10 @@ export function KakeiboLiffApp() {
                   <Button
                     type="button"
                     className="h-16 flex-col gap-1 px-2 text-xs active:scale-[0.98] [&_svg]:size-5"
-                    onClick={() => setActiveTab("add")}
+                    onClick={() => {
+                      setAddMode("image");
+                      cameraInputRef.current?.click();
+                    }}
                   >
                     <Camera className="size-5" aria-hidden="true" />
                     撮影
@@ -1564,7 +1598,10 @@ export function KakeiboLiffApp() {
                     type="button"
                     variant="secondary"
                     className="h-16 flex-col gap-1 px-2 text-xs active:scale-[0.98] [&_svg]:size-5"
-                    onClick={() => setActiveTab("add")}
+                    onClick={() => {
+                      setAddMode("manual");
+                      setActiveTab("add");
+                    }}
                   >
                     <Plus className="size-5" aria-hidden="true" />
                     手入力
@@ -1579,6 +1616,22 @@ export function KakeiboLiffApp() {
                     履歴
                   </Button>
                 </div>
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="sr-only"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.currentTarget.value = "";
+                    if (!file) {
+                      return;
+                    }
+                    selectReceiptFile(file);
+                    setActiveTab("add");
+                  }}
+                />
               </section>
 
               <section className="relative grid gap-3">
@@ -2346,6 +2399,7 @@ export function KakeiboLiffApp() {
               onAmountChange={updateReceiptNoteAmount}
               onReceivedChange={updateReceiptNoteCheck}
               onCategoryChange={updateReceiptNoteRowCategory}
+              onUserDraftChange={draftReceiptNoteUserName}
               onUserChange={updateReceiptNoteUserName}
               onDeleteRow={deleteReceiptNoteRow}
               onConfirmationChange={updateReceiptNoteConfirmation}
@@ -2410,8 +2464,8 @@ function ButtonIcon({
 function DataLine({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="truncate font-semibold">{value}</span>
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className="min-w-0 truncate font-semibold">{value}</span>
     </div>
   );
 }
@@ -2431,6 +2485,7 @@ function ReceiptNotePage({
   onAmountChange,
   onReceivedChange,
   onCategoryChange,
+  onUserDraftChange,
   onUserChange,
   onDeleteRow,
   onConfirmationChange,
@@ -2449,6 +2504,7 @@ function ReceiptNotePage({
   onAmountChange: (row: ReceiptNoteRow, amount: number) => void;
   onReceivedChange: (row: ReceiptNoteRow, checked: boolean) => void;
   onCategoryChange: (row: ReceiptNoteRow, category: ReceiptNoteCategory) => void;
+  onUserDraftChange: (rowKey: string, userName: string) => void;
   onUserChange: (row: ReceiptNoteRow, userName: string) => void;
   onDeleteRow: (row: ReceiptNoteRow) => void;
   onConfirmationChange: (
@@ -2480,7 +2536,9 @@ function ReceiptNotePage({
               {monthLabel}
             </h2>
           </div>
-          <Badge variant="outline">{confirmedCategoryCount}/3 全体確認</Badge>
+          <Badge variant="outline">
+            {confirmedCategoryCount}/{receiptNoteCategories.length} 全体確認
+          </Badge>
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2">
           <div className="min-w-0 rounded-md border bg-background/70 p-3">
@@ -2521,17 +2579,34 @@ function ReceiptNotePage({
                 }
               />
             </Field>
-            <Field label="ユーザー" htmlFor="receipt-note-add-user">
-              <ReceiptNoteUserSelect
-                id="receipt-note-add-user"
-                users={users}
-                value={draft.userName || users[0]?.name || ""}
-                disabled={disabled}
-                onChange={(userName) =>
-                  onDraftChange((current) => ({ ...current, userName }))
-                }
-              />
-            </Field>
+            {draft.category === "other" ? (
+              <Field label="タイトル" htmlFor="receipt-note-add-title">
+                <Input
+                  id="receipt-note-add-title"
+                  value={draft.userName}
+                  placeholder="例: 立て替え分"
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onDraftChange((current) => ({
+                      ...current,
+                      userName: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+            ) : (
+              <Field label="ユーザー" htmlFor="receipt-note-add-user">
+                <ReceiptNoteUserSelect
+                  id="receipt-note-add-user"
+                  users={users}
+                  value={draft.userName || users[0]?.name || ""}
+                  disabled={disabled}
+                  onChange={(userName) =>
+                    onDraftChange((current) => ({ ...current, userName }))
+                  }
+                />
+              </Field>
+            )}
             <Field label="金額" htmlFor="receipt-note-add-amount">
               <Input
                 id="receipt-note-add-amount"
@@ -2561,7 +2636,7 @@ function ReceiptNotePage({
         onValueChange={(value) => onFilterChange(value as ReceiptNoteFilter)}
         className="grid gap-4"
       >
-        <TabsList aria-label="受領完了ノートのカテゴリー" className="grid w-full grid-cols-4">
+        <TabsList aria-label="受領完了ノートのカテゴリー" className="grid w-full grid-cols-5">
           {receiptNoteFilters.map((item) => (
             <TabsTrigger
               key={item.value}
@@ -2584,6 +2659,7 @@ function ReceiptNotePage({
               onAmountChange={onAmountChange}
               onReceivedChange={onReceivedChange}
               onCategoryChange={onCategoryChange}
+              onUserDraftChange={onUserDraftChange}
               onUserChange={onUserChange}
               onDeleteRow={onDeleteRow}
               onConfirmationChange={onConfirmationChange}
@@ -2669,6 +2745,7 @@ function ReceiptNoteCategoryCard({
   onAmountChange,
   onReceivedChange,
   onCategoryChange,
+  onUserDraftChange,
   onUserChange,
   onDeleteRow,
   onConfirmationChange,
@@ -2681,6 +2758,7 @@ function ReceiptNoteCategoryCard({
   onAmountChange: (row: ReceiptNoteRow, amount: number) => void;
   onReceivedChange: (row: ReceiptNoteRow, checked: boolean) => void;
   onCategoryChange: (row: ReceiptNoteRow, category: ReceiptNoteCategory) => void;
+  onUserDraftChange: (rowKey: string, userName: string) => void;
   onUserChange: (row: ReceiptNoteRow, userName: string) => void;
   onDeleteRow: (row: ReceiptNoteRow) => void;
   onConfirmationChange: (
@@ -2724,7 +2802,7 @@ function ReceiptNoteCategoryCard({
               <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <UserRound className="size-4 shrink-0 text-primary" aria-hidden="true" />
-                  <span className="truncate font-semibold">{row.user.name}</span>
+                  <span className="min-w-0 truncate font-semibold">{row.user.name}</span>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <Badge variant={row.isManual ? "outline" : "secondary"}>
@@ -2747,18 +2825,36 @@ function ReceiptNoteCategoryCard({
                     onChange={(category) => onCategoryChange(row, category)}
                   />
                 </Field>
-                <Field
-                  label="ユーザー"
-                  htmlFor={`${summary.value}-${index}-receipt-user`}
-                >
-                  <ReceiptNoteUserSelect
-                    id={`${summary.value}-${index}-receipt-user`}
-                    users={users}
-                    value={row.user.name}
-                    disabled={disabled}
-                    onChange={(userName) => onUserChange(row, userName)}
-                  />
-                </Field>
+                {row.category === "other" ? (
+                  <Field
+                    label="タイトル"
+                    htmlFor={`${summary.value}-${index}-receipt-title`}
+                  >
+                    <Input
+                      id={`${summary.value}-${index}-receipt-title`}
+                      name={`${summary.value}-${index}-receipt-title`}
+                      value={row.user.name}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        onUserDraftChange(row.key, event.target.value)
+                      }
+                      onBlur={(event) => onUserChange(row, event.target.value)}
+                    />
+                  </Field>
+                ) : (
+                  <Field
+                    label="ユーザー"
+                    htmlFor={`${summary.value}-${index}-receipt-user`}
+                  >
+                    <ReceiptNoteUserSelect
+                      id={`${summary.value}-${index}-receipt-user`}
+                      users={users}
+                      value={row.user.name}
+                      disabled={disabled}
+                      onChange={(userName) => onUserChange(row, userName)}
+                    />
+                  </Field>
+                )}
                 <Field
                   label="設定額"
                   htmlFor={`${summary.value}-${index}-receipt-amount`}
@@ -2928,9 +3024,9 @@ function CalendarEventItem({
 
   return (
     <article className="grid gap-3 rounded-md border bg-background/70 p-3">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="truncate font-bold">{event.title}</h3>
+          <h3 className="line-clamp-2 break-words font-bold">{event.title}</h3>
           <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
             <Clock3 className="size-4" aria-hidden="true" />
             {event.date} / {event.timeLabel}
@@ -3112,7 +3208,7 @@ function DiningBalanceCard({ users }: { users: DashboardData["users"] }) {
               >
                 <div className="flex min-w-0 items-center gap-2">
                   <UserRound className="size-4 shrink-0 text-primary" aria-hidden="true" />
-                  <span className="truncate font-semibold">{user.displayName}</span>
+                  <span className="min-w-0 truncate font-semibold">{user.displayName}</span>
                 </div>
                 <span className="text-glow shrink-0 font-black tabular-nums">
                   {formatCurrency(user.diningBalance)}
@@ -3197,7 +3293,7 @@ function CategorySelect({
   onChange,
 }: {
   id: string;
-  value: ExpenseCategory;
+  value: ExpenseCategory | "";
   onChange: (value: ExpenseCategory) => void;
 }) {
   return (
@@ -3207,6 +3303,9 @@ function CategorySelect({
       onChange={(event) => onChange(event.target.value as ExpenseCategory)}
       className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
     >
+      <option value="" disabled>
+        未設定
+      </option>
       {categories.map((category) => (
         <option key={category} value={category}>
           {category}
@@ -3332,7 +3431,7 @@ function SubscriptionRow({
 
   return (
     <article className="grid gap-3 rounded-md border bg-background/70 p-4">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="truncate font-bold">{subscription.serviceName}</h3>
           <p className="text-sm text-muted-foreground">

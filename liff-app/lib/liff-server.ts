@@ -92,6 +92,7 @@ const receiptNoteCategories = new Set<ReceiptNoteCategory>([
   "diningSaving",
   "shoppingSettlement",
   "travelSettlement",
+  "other",
 ]);
 
 export function getFirestore() {
@@ -335,6 +336,18 @@ export async function getAuthorizedContext(request: NextRequest): Promise<Author
 
 function normalizeUserName(value: string) {
   return value.replace(/^@/, "").replace(/\s+/g, "").toLowerCase();
+}
+
+// その他カテゴリーは userName を自由入力のタイトルとして扱う
+export function resolveReceiptNoteUser(
+  body: { category: ReceiptNoteCategory; userName: string },
+  context: AuthorizedContext,
+) {
+  if (body.category === "other") {
+    return { id: context.user.id, displayName: body.userName };
+  }
+
+  return resolveUserByName(body.userName, context);
 }
 
 export function resolveUserByName(input: string, context: AuthorizedContext) {

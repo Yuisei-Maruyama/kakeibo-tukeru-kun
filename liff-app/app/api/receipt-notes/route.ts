@@ -8,7 +8,7 @@ import {
   getErrorMessage,
   getFirestore,
   mapReceiptNoteForClient,
-  resolveUserByName,
+  resolveReceiptNoteUser,
 } from "@/lib/liff-server";
 
 export const runtime = "nodejs";
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
   try {
     const context = await getAuthorizedContext(request);
     const body = parseReceiptNoteBody((await request.json()) as ReceiptNoteRequestBody);
-    const user = resolveUserByName(body.userName, context);
+    const user = resolveReceiptNoteUser(body, context);
     const receiptNoteRef = getFirestore().collection("receiptNotes").doc();
     const receiptNote = {
       id: receiptNoteRef.id,
