@@ -152,14 +152,23 @@ export function assertPositiveAmount(value: unknown, label = "金額") {
   return amount;
 }
 
-export function assertNonNegativeAmount(value: unknown, label = "金額") {
+/**
+ * 金額を整数へ丸めて検証する（負値も許容する）。
+ * 外食貯金の自動集計行は予算超過でマイナスになりうるため、非負制約は課さず
+ * boolean を拒否したうえで有限な整数であることだけを保証する。
+ * @param value 検証対象の金額値
+ * @param label エラーメッセージに使うフィールド名
+ * @returns Math.round で丸めた整数
+ */
+export function assertIntegerAmount(value: unknown, label = "金額") {
+  // boolean は Number(true)=1 とすり抜けるため明示的に拒否する
   if (typeof value === "boolean") {
-    throw new Error(`${label}は 0 円以上で入力してください`);
+    throw new Error(`${label}を正しく入力してください`);
   }
 
   const amount = Math.round(Number(value));
-  if (!Number.isFinite(amount) || amount < 0) {
-    throw new Error(`${label}は 0 円以上で入力してください`);
+  if (!Number.isFinite(amount)) {
+    throw new Error(`${label}を正しく入力してください`);
   }
 
   return amount;

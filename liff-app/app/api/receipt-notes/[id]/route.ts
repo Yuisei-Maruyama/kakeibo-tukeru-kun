@@ -1,7 +1,7 @@
 import { Timestamp } from "@google-cloud/firestore";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  assertNonNegativeAmount,
+  assertIntegerAmount,
   assertPositiveAmount,
   assertReceiptNoteCategory,
   ensureGroupReceiptNoteAccess,
@@ -28,11 +28,11 @@ function parseReceiptNoteBody(body: ReceiptNoteRequestBody, source: string) {
   return {
     category: assertReceiptNoteCategory(body.category),
     userName: body.userName?.trim() || "@自分",
-    // 手動ノートは 1 円以上を必須にする（自動集計行は 0 円を許容）
+    // 手動ノートは 1 円以上を必須にする（自動集計行は予算超過のマイナスも許容）
     amount:
       source === "manual"
         ? assertPositiveAmount(body.amount)
-        : assertNonNegativeAmount(body.amount),
+        : assertIntegerAmount(body.amount),
   };
 }
 

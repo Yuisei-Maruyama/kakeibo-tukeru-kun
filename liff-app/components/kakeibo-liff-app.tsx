@@ -6,7 +6,6 @@ import {
   Camera,
   ChartNoAxesCombined,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleHelp,
@@ -136,6 +135,9 @@ type CommandTile =
   | { label: string; action: "subscriptions"; icon: React.ElementType; command?: never; reportMode?: never };
 
 const categories: ExpenseCategory[] = ["外食費用", "買い物費用", "旅行費用"];
+
+// 受領ノートの月切替セレクターで遡れる最古の月（この月から当月まで）
+const RECEIPT_NOTE_START_MONTH = "2026-06";
 
 const expenseCategoryFilters: { value: ExpenseCategoryFilter; label: string }[] = [
   { value: "all", label: "すべて" },
@@ -680,6 +682,8 @@ export function KakeiboLiffApp() {
     const diningBalanceMap = new Map<string, number>();
     const rows: ReceiptNoteRow[] = [];
     const savedReceiptNoteKeys = new Set<string>();
+    // 外食貯金の自動行抑止に使う「アクティブな保存済みノート」だけのキー
+    const activeReceiptNoteKeys = new Set<string>();
 
     for (const receiptNote of savedReceiptNotes) {
       savedReceiptNoteKeys.add(`${receiptNote.category}:${receiptNote.userId}`);
@@ -688,6 +692,9 @@ export function KakeiboLiffApp() {
       if (!receiptNote.isActive) {
         continue;
       }
+
+      activeReceiptNoteKeys.add(`${receiptNote.category}:${receiptNote.userId}`);
+      activeReceiptNoteKeys.add(`${receiptNote.category}:${receiptNote.userName}`);
 
       rows.push({
         key: receiptNote.id,
@@ -716,15 +723,29 @@ export function KakeiboLiffApp() {
       diningBalanceMap.set(user.displayName, user.diningBalance);
     }
 
+    // 外食貯金の残高（users.diningBalance）は「現在」の値のため過去月では使わない
+    const isCurrentMonth = dashboardMonth === todayInputValue().slice(0, 7);
+
     for (const category of receiptNoteCategories) {
       // その他など支出カテゴリーに紐付かないものは自動集計行を作らない
       if (!category.expenseCategory) {
         continue;
       }
 
+      const isDiningSaving = category.value === "diningSaving";
+
       for (const user of receiptNoteUsers) {
         const key = createReceiptNoteKey(dashboardMonth, category.value, user.name);
-        if (
+        // 外食貯金は 0 円・マイナスでも常時表示するため、アクティブな保存済みノートが
+        // あるときだけ抑止する（論理削除済みノート・削除済みキーでは抑止しない）
+        if (isDiningSaving) {
+          if (
+            activeReceiptNoteKeys.has(`${category.value}:${user.id}`) ||
+            activeReceiptNoteKeys.has(`${category.value}:${user.name}`)
+          ) {
+            continue;
+          }
+        } else if (
           receiptNoteDeletedKeys[key] ||
           savedReceiptNoteKeys.has(`${category.value}:${user.id}`) ||
           savedReceiptNoteKeys.has(`${category.value}:${user.name}`)
@@ -736,14 +757,14 @@ export function KakeiboLiffApp() {
           category.expenseCategory,
           user.name,
         );
-        const defaultAmount =
-          category.value === "diningSaving"
-            ? Math.max(
-                diningBalanceMap.get(user.name) ??
-                  budget - (expenseAmountMap.get(categoryExpenseKey) ?? 0),
-                0,
-              )
-            : expenseAmountMap.get(categoryExpenseKey) ?? 0;
+        // 当月は現在残高を、過去月は「予算 − その月の外食支出合計」を初期額にする（負値も通す）
+        const fallbackDiningSaving =
+          budget - (expenseAmountMap.get(categoryExpenseKey) ?? 0);
+        const defaultAmount = isDiningSaving
+          ? isCurrentMonth
+            ? diningBalanceMap.get(user.name) ?? fallbackDiningSaving
+            : fallbackDiningSaving
+          : expenseAmountMap.get(categoryExpenseKey) ?? 0;
         const userName = receiptNoteUserNames[key] ?? user.name;
 
         rows.push({
@@ -855,6 +876,16 @@ export function KakeiboLiffApp() {
     }
 
     setDashboardMonth(normalizedMonth);
+  }
+
+  // 受領ノートの月セレクターから対象月を切り替える（既存のダッシュボード読み込み経路に乗せる）
+  function changeReceiptNoteMonth(month: string) {
+    if (month === dashboardMonth) {
+      void loadDashboard();
+      return;
+    }
+
+    setDashboardMonth(month);
   }
 
   function selectReceiptFile(file: File | undefined) {
@@ -1450,33 +1481,113 @@ export function KakeiboLiffApp() {
     }
   }
 
-  function draftReceiptNoteAmount(rowKey: string, amount: number) {
-    setReceiptNoteAmounts((current) => ({
-      ...current,
-      [rowKey]: Number.isFinite(amount) ? Math.max(amount, 0) : 0,
-    }));
-  }
+  // モーダルからカテゴリー・ユーザー/タイトル・設定額をまとめて更新する
+  async function updateReceiptNoteRowDetails(
+    row: ReceiptNoteRow,
+    patch: { category: ReceiptNoteCategory; userName: string; amount: number },
+  ) {
+    const userName = patch.userName.trim();
+    // カテゴリーが「その他」ならタイトル、それ以外はユーザーを必須にする
+    if (patch.category === "other") {
+      if (!userName) {
+        showError("タイトルを入力してください");
+        return false;
+      }
+    } else if (!userName) {
+      showError("ユーザーを選択してください");
+      return false;
+    }
 
-  function draftReceiptNoteUserName(rowKey: string, userName: string) {
-    setReceiptNoteUserNames((current) => ({
-      ...current,
-      [rowKey]: userName,
-    }));
-  }
+    // 手動追加行は 1 円以上。自動集計行（外食貯金など）は予算超過のマイナスも許容し、
+    // 有限な整数であることだけを求める
+    if (row.isManual) {
+      if (!Number.isFinite(patch.amount) || patch.amount < 1) {
+        showError("金額は 1 円以上で入力してください");
+        return false;
+      }
+    } else if (!Number.isInteger(patch.amount)) {
+      showError("金額は整数で入力してください");
+      return false;
+    }
 
-  async function updateReceiptNoteAmount(row: ReceiptNoteRow, amount: number) {
-    const nextAmount = Number.isFinite(amount) ? Math.max(amount, 0) : 0;
-    setReceiptNoteAmounts((current) => ({
-      ...current,
-      [row.key]: nextAmount,
-    }));
+    // 変更のあったフィールドだけを差分にまとめ、全一致なら何もしない
+    const nextCategory =
+      patch.category !== row.category ? patch.category : undefined;
+    const nextUserName = userName !== row.user.name ? userName : undefined;
+    const nextAmount = patch.amount !== row.amount ? patch.amount : undefined;
+    if (
+      nextCategory === undefined &&
+      nextUserName === undefined &&
+      nextAmount === undefined
+    ) {
+      return true;
+    }
+
+    const diff: Partial<Pick<ReceiptNoteRow, "category" | "amount">> & {
+      userName?: string;
+    } = {};
+    if (nextCategory !== undefined) {
+      diff.category = nextCategory;
+    }
+    if (nextUserName !== undefined) {
+      diff.userName = nextUserName;
+    }
+    if (nextAmount !== undefined) {
+      diff.amount = nextAmount;
+    }
+
+    // 楽観更新: 変更フィールドの override を更新（巻き戻し用に変更前値を保持）
+    const previousCategory = receiptNoteRowCategories[row.key];
+    const previousUserName = receiptNoteUserNames[row.key];
+    const previousAmount = receiptNoteAmounts[row.key];
+    if (nextCategory !== undefined) {
+      setReceiptNoteRowCategories((current) => ({
+        ...current,
+        [row.key]: nextCategory,
+      }));
+    }
+    if (nextUserName !== undefined) {
+      setReceiptNoteUserNames((current) => ({
+        ...current,
+        [row.key]: nextUserName,
+      }));
+    }
+    if (nextAmount !== undefined) {
+      setReceiptNoteAmounts((current) => ({
+        ...current,
+        [row.key]: nextAmount,
+      }));
+    }
     setIsMutating(true);
 
     try {
-      await saveReceiptNoteRow(row, { amount: nextAmount });
+      await saveReceiptNoteRow(row, diff);
+      // 自動集計行は保存後に保存済みノートが表現するため、元スロットを抑止して override を破棄する
+      if (!row.id) {
+        setReceiptNoteDeletedKeys((current) => ({ ...current, [row.key]: true }));
+        clearReceiptNoteRowOverrides(row.key);
+      }
       celebrateSave();
+      return true;
     } catch (error) {
+      // 触った override をすべて巻き戻す
+      if (nextCategory !== undefined) {
+        setReceiptNoteRowCategories((current) =>
+          restoreRecordKey(current, row.key, previousCategory),
+        );
+      }
+      if (nextUserName !== undefined) {
+        setReceiptNoteUserNames((current) =>
+          restoreRecordKey(current, row.key, previousUserName),
+        );
+      }
+      if (nextAmount !== undefined) {
+        setReceiptNoteAmounts((current) =>
+          restoreRecordKey(current, row.key, previousAmount),
+        );
+      }
       showError(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
+      return false;
     } finally {
       setIsMutating(false);
     }
@@ -1550,61 +1661,6 @@ export function KakeiboLiffApp() {
     setReceiptNoteConfirmOverrides((current) => omitRecordKey(current, key));
     setReceiptNoteUserNames((current) => omitRecordKey(current, key));
     setReceiptNoteRowCategories((current) => omitRecordKey(current, key));
-  }
-
-  async function updateReceiptNoteRowCategory(
-    row: ReceiptNoteRow,
-    category: ReceiptNoteCategory,
-  ) {
-    const previousCategory = receiptNoteRowCategories[row.key];
-    setReceiptNoteRowCategories((current) => ({
-      ...current,
-      [row.key]: category,
-    }));
-    setIsMutating(true);
-
-    try {
-      await saveReceiptNoteRow(row, { category });
-      // 自動集計行は保存後に保存済みノートが表現するため、元スロットを抑止して override を破棄する
-      if (!row.id) {
-        setReceiptNoteDeletedKeys((current) => ({ ...current, [row.key]: true }));
-        clearReceiptNoteRowOverrides(row.key);
-      }
-      celebrateSave();
-    } catch (error) {
-      setReceiptNoteRowCategories((current) =>
-        restoreRecordKey(current, row.key, previousCategory),
-      );
-      showError(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
-    } finally {
-      setIsMutating(false);
-    }
-  }
-
-  async function updateReceiptNoteUserName(row: ReceiptNoteRow, userName: string) {
-    const previousUserName = receiptNoteUserNames[row.key];
-    setReceiptNoteUserNames((current) => ({
-      ...current,
-      [row.key]: userName,
-    }));
-    setIsMutating(true);
-
-    try {
-      await saveReceiptNoteRow(row, { userName });
-      // 自動集計行は保存後に保存済みノートが表現するため、元スロットを抑止して override を破棄する
-      if (!row.id) {
-        setReceiptNoteDeletedKeys((current) => ({ ...current, [row.key]: true }));
-        clearReceiptNoteRowOverrides(row.key);
-      }
-      celebrateSave();
-    } catch (error) {
-      setReceiptNoteUserNames((current) =>
-        restoreRecordKey(current, row.key, previousUserName),
-      );
-      showError(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
-    } finally {
-      setIsMutating(false);
-    }
   }
 
   async function deleteReceiptNoteRow(row: ReceiptNoteRow) {
@@ -2596,18 +2652,16 @@ export function KakeiboLiffApp() {
               users={receiptNoteUsers}
               currentUser={currentUser}
               groupUsers={receiptNoteGroupUsers}
-              monthLabel={homeMonthLabel}
+              month={dashboardMonth}
+              isLoading={isLoadingDashboard}
               draft={receiptNoteDraft}
               disabled={isMutating}
+              onMonthChange={changeReceiptNoteMonth}
               onFilterChange={setReceiptNoteFilter}
               onDraftChange={setReceiptNoteDraft}
               onAddRow={addReceiptNoteRow}
-              onAmountDraftChange={draftReceiptNoteAmount}
-              onAmountChange={updateReceiptNoteAmount}
               onConfirmChange={updateReceiptNoteConfirm}
-              onCategoryChange={updateReceiptNoteRowCategory}
-              onUserDraftChange={draftReceiptNoteUserName}
-              onUserChange={updateReceiptNoteUserName}
+              onUpdateRow={updateReceiptNoteRowDetails}
               onDeleteRow={deleteReceiptNoteRow}
             />
           </TabsContent>
@@ -2739,18 +2793,16 @@ function ReceiptNotePage({
   users,
   currentUser,
   groupUsers,
-  monthLabel,
+  month,
+  isLoading,
   draft,
   disabled,
+  onMonthChange,
   onFilterChange,
   onDraftChange,
   onAddRow,
-  onAmountDraftChange,
-  onAmountChange,
   onConfirmChange,
-  onCategoryChange,
-  onUserDraftChange,
-  onUserChange,
+  onUpdateRow,
   onDeleteRow,
 }: {
   filter: ReceiptNoteFilter;
@@ -2758,20 +2810,36 @@ function ReceiptNotePage({
   users: ReceiptNoteUser[];
   currentUser: DashboardData["currentUser"];
   groupUsers: ReceiptNoteGroupUser[];
-  monthLabel: string;
+  month: string;
+  isLoading: boolean;
   draft: ReceiptNoteDraft;
   disabled: boolean;
+  onMonthChange: (value: string) => void;
   onFilterChange: (value: ReceiptNoteFilter) => void;
   onDraftChange: React.Dispatch<React.SetStateAction<ReceiptNoteDraft>>;
   onAddRow: () => void;
-  onAmountDraftChange: (rowKey: string, amount: number) => void;
-  onAmountChange: (row: ReceiptNoteRow, amount: number) => void;
   onConfirmChange: (row: ReceiptNoteRow, confirmed: boolean) => void;
-  onCategoryChange: (row: ReceiptNoteRow, category: ReceiptNoteCategory) => void;
-  onUserDraftChange: (rowKey: string, userName: string) => void;
-  onUserChange: (row: ReceiptNoteRow, userName: string) => void;
+  onUpdateRow: (
+    row: ReceiptNoteRow,
+    patch: { category: ReceiptNoteCategory; userName: string; amount: number },
+  ) => Promise<boolean>;
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
+  // 開始月から当月まで 1 ヶ月ずつ遡った降順の選択肢
+  const monthOptions = React.useMemo(() => {
+    const months: string[] = [];
+    let cursor = todayInputValue().slice(0, 7);
+    while (cursor >= RECEIPT_NOTE_START_MONTH) {
+      months.push(cursor);
+      cursor = shiftYearMonth(cursor, -1);
+    }
+    // ホーム側の月指定で範囲外の月が表示中でも select が空にならないようにする
+    if (month && !months.includes(month)) {
+      months.push(month);
+      months.sort((a, b) => b.localeCompare(a));
+    }
+    return months;
+  }, [month]);
   const groupUserIds = groupUsers.map((user) => user.id);
   const selfConfirmedOf = (row: ReceiptNoteRow) =>
     currentUser != null && row.confirmations[currentUser.id] != null;
@@ -2808,13 +2876,24 @@ function ReceiptNotePage({
     .filter((card) => card.tabRows.length > 0);
 
   return (
-    <div className="grid gap-4">
+    <div className="relative grid gap-4">
+      <LoadingOverlay show={isLoading} />
       <section className="chalk-frame bg-card p-4 shadow-ledger">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-yadon">対象月</p>
-          <h2 className="mt-1 truncate text-2xl font-black leading-tight">
-            {monthLabel}
-          </h2>
+          <select
+            aria-label="受領ノートの対象月"
+            value={month}
+            disabled={disabled || isLoading}
+            onChange={(event) => onMonthChange(event.target.value)}
+            className="chalk-select mt-2 h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-xl font-black shadow-sm"
+          >
+            {monthOptions.map((option) => (
+              <option key={option} value={option}>
+                {formatYearMonthLabel(option)}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2">
           <div className="min-w-0 rounded-md border bg-background/70 p-3">
@@ -2962,12 +3041,8 @@ function ReceiptNotePage({
                 currentUser={currentUser}
                 groupUsers={groupUsers}
                 disabled={disabled}
-                onAmountDraftChange={onAmountDraftChange}
-                onAmountChange={onAmountChange}
                 onConfirmChange={onConfirmChange}
-                onCategoryChange={onCategoryChange}
-                onUserDraftChange={onUserDraftChange}
-                onUserChange={onUserChange}
+                onUpdateRow={onUpdateRow}
                 onDeleteRow={onDeleteRow}
               />
             ))
@@ -3072,12 +3147,8 @@ function ReceiptNoteCategoryCard({
   currentUser,
   groupUsers,
   disabled,
-  onAmountDraftChange,
-  onAmountChange,
   onConfirmChange,
-  onCategoryChange,
-  onUserDraftChange,
-  onUserChange,
+  onUpdateRow,
   onDeleteRow,
 }: {
   summaryValue: ReceiptNoteCategory;
@@ -3092,17 +3163,13 @@ function ReceiptNoteCategoryCard({
   currentUser: DashboardData["currentUser"];
   groupUsers: ReceiptNoteGroupUser[];
   disabled: boolean;
-  onAmountDraftChange: (rowKey: string, amount: number) => void;
-  onAmountChange: (row: ReceiptNoteRow, amount: number) => void;
   onConfirmChange: (row: ReceiptNoteRow, confirmed: boolean) => void;
-  onCategoryChange: (row: ReceiptNoteRow, category: ReceiptNoteCategory) => void;
-  onUserDraftChange: (rowKey: string, userName: string) => void;
-  onUserChange: (row: ReceiptNoteRow, userName: string) => void;
+  onUpdateRow: (
+    row: ReceiptNoteRow,
+    patch: { category: ReceiptNoteCategory; userName: string; amount: number },
+  ) => Promise<boolean>;
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
-  // 開いている明細行のキー（同時に 1 行のみ展開）
-  const [expandedKey, setExpandedKey] = React.useState<string | null>(null);
-
   return (
     <Card>
       <CardHeader>
@@ -3137,43 +3204,14 @@ function ReceiptNoteCategoryCard({
               currentUser={currentUser}
               groupUsers={groupUsers}
               disabled={disabled}
-              expanded={expandedKey === row.key}
-              onToggle={() =>
-                setExpandedKey((current) =>
-                  current === row.key ? null : row.key,
-                )
-              }
-              onAmountDraftChange={onAmountDraftChange}
-              onAmountChange={onAmountChange}
               onConfirmChange={onConfirmChange}
-              onCategoryChange={onCategoryChange}
-              onUserDraftChange={onUserDraftChange}
-              onUserChange={onUserChange}
+              onUpdateRow={onUpdateRow}
               onDeleteRow={onDeleteRow}
             />
           ))}
         </fieldset>
       </CardContent>
     </Card>
-  );
-}
-
-function AccordionChevron({
-  expanded,
-  className,
-}: {
-  expanded: boolean;
-  className?: string;
-}) {
-  return (
-    <ChevronDown
-      className={cn(
-        "size-4 shrink-0 text-muted-foreground transition-transform",
-        expanded && "rotate-180",
-        className,
-      )}
-      aria-hidden="true"
-    />
   );
 }
 
@@ -3185,14 +3223,8 @@ function ReceiptNoteRowItem({
   currentUser,
   groupUsers,
   disabled,
-  expanded,
-  onToggle,
-  onAmountDraftChange,
-  onAmountChange,
   onConfirmChange,
-  onCategoryChange,
-  onUserDraftChange,
-  onUserChange,
+  onUpdateRow,
   onDeleteRow,
 }: {
   row: ReceiptNoteRow;
@@ -3202,22 +3234,37 @@ function ReceiptNoteRowItem({
   currentUser: DashboardData["currentUser"];
   groupUsers: ReceiptNoteGroupUser[];
   disabled: boolean;
-  expanded: boolean;
-  onToggle: () => void;
-  onAmountDraftChange: (rowKey: string, amount: number) => void;
-  onAmountChange: (row: ReceiptNoteRow, amount: number) => void;
   onConfirmChange: (row: ReceiptNoteRow, confirmed: boolean) => void;
-  onCategoryChange: (row: ReceiptNoteRow, category: ReceiptNoteCategory) => void;
-  onUserDraftChange: (rowKey: string, userName: string) => void;
-  onUserChange: (row: ReceiptNoteRow, userName: string) => void;
+  onUpdateRow: (
+    row: ReceiptNoteRow,
+    patch: { category: ReceiptNoteCategory; userName: string; amount: number },
+  ) => Promise<boolean>;
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
-  const panelId = `${summaryValue}-${index}-receipt-panel`;
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [draft, setDraft] = React.useState<{
+    category: ReceiptNoteCategory;
+    userName: string;
+    amount: number | "";
+  }>({ category: row.category, userName: row.user.name, amount: row.amount });
+
+  // 行の内容が変わったら編集ドラフトを同期する
+  React.useEffect(() => {
+    setDraft({
+      category: row.category,
+      userName: row.user.name,
+      amount: row.amount,
+    });
+  }, [row.category, row.user.name, row.amount]);
+
   const selfConfirmed =
     currentUser != null && row.confirmations[currentUser.id] != null;
   const bothConfirmed =
     groupUsers.length > 0 &&
     groupUsers.every((user) => row.confirmations[user.id] != null);
+  const isDiningSaving = row.category === "diningSaving";
+  // 外食貯金の自動行・自動由来の保存行は削除しても自動行が復活するため削除ボタンを隠す
+  const canDelete = !(isDiningSaving && !row.isManual);
 
   return (
     <div
@@ -3236,22 +3283,154 @@ function ReceiptNoteRowItem({
           aria-label={`${row.user.name}を自分が確認済みにする`}
           onChange={(event) => onConfirmChange(row, event.target.checked)}
         />
-        <button
-          type="button"
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
-          aria-expanded={expanded}
-          aria-controls={panelId}
-          onClick={onToggle}
+        <span className="min-w-0 flex-1 truncate font-semibold">
+          {row.user.name}
+        </span>
+        {row.isManual ? <Badge variant="outline">追加</Badge> : null}
+        <span
+          className={cn(
+            "shrink-0 font-bold tabular-nums",
+            isDiningSaving && row.amount < 0 ? "text-destructive" : undefined,
+          )}
         >
-          <span className="min-w-0 flex-1 truncate font-semibold">
-            {row.user.name}
-          </span>
-          {row.isManual ? <Badge variant="outline">追加</Badge> : null}
-          <span className="shrink-0 font-bold tabular-nums">
-            {formatCurrency(row.amount)}
-          </span>
-          <AccordionChevron expanded={expanded} />
-        </button>
+          {formatCurrency(row.amount)}
+        </span>
+        <Dialog
+          open={editOpen}
+          onOpenChange={(open) => {
+            setEditOpen(open);
+            // 開くたびに行の現在値からドラフトを作り直す（前回の編集途中の値を残さない）
+            if (open) {
+              setDraft({
+                category: row.category,
+                userName: row.user.name,
+                amount: row.amount,
+              });
+            }
+          }}
+        >
+          <DialogTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="shrink-0"
+              aria-label={`${row.user.name}の明細を編集`}
+            >
+              <Edit3 aria-hidden="true" />
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>明細を編集</DialogTitle>
+              <DialogDescription>{row.user.name}</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4">
+              <Field
+                label="カテゴリー"
+                htmlFor={`${summaryValue}-${index}-receipt-category`}
+              >
+                <ReceiptNoteCategorySelect
+                  id={`${summaryValue}-${index}-receipt-category`}
+                  value={draft.category}
+                  disabled={disabled}
+                  onChange={(category) =>
+                    setDraft((current) => ({ ...current, category }))
+                  }
+                />
+              </Field>
+              {draft.category === "other" ? (
+                <Field
+                  label="タイトル"
+                  htmlFor={`${summaryValue}-${index}-receipt-title`}
+                >
+                  <Input
+                    id={`${summaryValue}-${index}-receipt-title`}
+                    value={draft.userName}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        userName: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+              ) : (
+                <Field
+                  label="ユーザー"
+                  htmlFor={`${summaryValue}-${index}-receipt-user`}
+                >
+                  <ReceiptNoteUserSelect
+                    id={`${summaryValue}-${index}-receipt-user`}
+                    users={users}
+                    value={draft.userName}
+                    disabled={disabled}
+                    onChange={(userName) =>
+                      setDraft((current) => ({ ...current, userName }))
+                    }
+                  />
+                </Field>
+              )}
+              <Field
+                label="設定額"
+                htmlFor={`${summaryValue}-${index}-receipt-amount`}
+              >
+                <Input
+                  id={`${summaryValue}-${index}-receipt-amount`}
+                  type="number"
+                  min={row.isManual ? 1 : undefined}
+                  inputMode="numeric"
+                  value={draft.amount}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      amount:
+                        event.target.value === ""
+                          ? ""
+                          : Number(event.target.value),
+                    }))
+                  }
+                />
+              </Field>
+            </div>
+            <DialogFooter>
+              {canDelete ? (
+                <DialogClose asChild>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={disabled}
+                    onClick={() => onDeleteRow(row)}
+                  >
+                    <ButtonIcon busy={disabled} icon={Trash2} />
+                    削除
+                  </Button>
+                </DialogClose>
+              ) : null}
+              <Button
+                type="button"
+                disabled={disabled}
+                onClick={() =>
+                  // バリデーションや保存に失敗したときは閉じずに入力を保持する
+                  void onUpdateRow(row, {
+                    category: draft.category,
+                    userName: draft.userName,
+                    amount: Number(draft.amount),
+                  }).then((saved) => {
+                    if (saved) {
+                      setEditOpen(false);
+                    }
+                  })
+                }
+              >
+                <ButtonIcon busy={disabled} icon={Send} />
+                更新
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
       {/* 確認状態（グループ各メンバーの確認状況を常時表示） */}
       {groupUsers.length > 0 ? (
@@ -3283,85 +3462,15 @@ function ReceiptNoteRowItem({
           })}
         </div>
       ) : null}
-      {/* 編集パネル */}
-      {expanded ? (
-        <div
-          id={panelId}
-          className="grid gap-3 border-t border-dashed pt-3"
-        >
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field
-              label="カテゴリー"
-              htmlFor={`${summaryValue}-${index}-receipt-category`}
-            >
-              <ReceiptNoteCategorySelect
-                id={`${summaryValue}-${index}-receipt-category`}
-                value={row.category}
-                disabled={disabled}
-                onChange={(category) => onCategoryChange(row, category)}
-              />
-            </Field>
-            {row.category === "other" ? (
-              <Field
-                label="タイトル"
-                htmlFor={`${summaryValue}-${index}-receipt-title`}
-              >
-                <Input
-                  id={`${summaryValue}-${index}-receipt-title`}
-                  name={`${summaryValue}-${index}-receipt-title`}
-                  value={row.user.name}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    onUserDraftChange(row.key, event.target.value)
-                  }
-                  onBlur={(event) => onUserChange(row, event.target.value)}
-                />
-              </Field>
-            ) : (
-              <Field
-                label="ユーザー"
-                htmlFor={`${summaryValue}-${index}-receipt-user`}
-              >
-                <ReceiptNoteUserSelect
-                  id={`${summaryValue}-${index}-receipt-user`}
-                  users={users}
-                  value={row.user.name}
-                  disabled={disabled}
-                  onChange={(userName) => onUserChange(row, userName)}
-                />
-              </Field>
-            )}
-            <Field
-              label="設定額"
-              htmlFor={`${summaryValue}-${index}-receipt-amount`}
-            >
-              <Input
-                id={`${summaryValue}-${index}-receipt-amount`}
-                name={`${summaryValue}-${index}-receipt-amount`}
-                type="number"
-                min={0}
-                inputMode="numeric"
-                value={row.amount}
-                disabled={disabled}
-                onChange={(event) =>
-                  onAmountDraftChange(row.key, Number(event.target.value))
-                }
-                onBlur={(event) =>
-                  onAmountChange(row, Number(event.target.value))
-                }
-              />
-            </Field>
-          </div>
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={disabled}
-            onClick={() => onDeleteRow(row)}
-          >
-            <ButtonIcon busy={disabled} icon={Trash2} />
-            削除
-          </Button>
-        </div>
+      {/* 外食貯金の予算超過・使い切りを注記で補足する */}
+      {isDiningSaving && row.amount < 0 ? (
+        <p className="pl-8 text-xs font-semibold text-destructive">
+          予算超過分 {formatCurrency(Math.abs(row.amount))} は {row.user.name} が負担
+        </p>
+      ) : isDiningSaving && row.amount === 0 ? (
+        <p className="pl-8 text-xs text-muted-foreground">
+          外食予算を使い切ったため今月の貯金はありません
+        </p>
       ) : null}
     </div>
   );
