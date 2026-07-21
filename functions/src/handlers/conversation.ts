@@ -512,15 +512,21 @@ async function handleAddExpenseConversation(
       dateStr
     );
 
-    await saveExpense({
-      userId: payerUser.id,
-      userName: payerName,
-      amount,
-      category,
-      storeName: '手動入力',
-      date: Timestamp.fromDate(expenseDate),
-      calendarEventId,
-    });
+    // 保存失敗時はカレンダーの孤児イベントを削除してからエラーを再throwする
+    try {
+      await saveExpense({
+        userId: payerUser.id,
+        userName: payerName,
+        amount,
+        category,
+        storeName: '手動入力',
+        date: Timestamp.fromDate(expenseDate),
+        calendarEventId,
+      });
+    } catch (error) {
+      await deleteCalendarEvent(calendarId, calendarEventId).catch(() => undefined);
+      throw error;
+    }
 
     // 外食費用かつ現在の月の場合のみ残高を更新
     let newBalance: number | undefined;
@@ -2202,15 +2208,21 @@ async function handleAddTravelConversation(
       dateStr
     );
 
-    await saveExpense({
-      userId: payerUser.id,
-      userName: payerName,
-      amount,
-      category: '旅行費用',
-      storeName,
-      date: Timestamp.fromDate(new Date(dateStr)),
-      calendarEventId,
-    });
+    // 保存失敗時はカレンダーの孤児イベントを削除してからエラーを再throwする
+    try {
+      await saveExpense({
+        userId: payerUser.id,
+        userName: payerName,
+        amount,
+        category: '旅行費用',
+        storeName,
+        date: Timestamp.fromDate(new Date(dateStr)),
+        calendarEventId,
+      });
+    } catch (error) {
+      await deleteCalendarEvent(calendarId, calendarEventId).catch(() => undefined);
+      throw error;
+    }
 
     const responseMessage = createRegistrationMessage(
       '旅行費用',

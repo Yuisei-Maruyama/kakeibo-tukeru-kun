@@ -153,17 +153,48 @@ export async function adjustDiningBalance(userId: string, delta: number): Promis
 }
 
 /**
+ * 指定時刻が属するJST月の支出日付ウィンドウ [monthStart, nextMonthStart) を求める
+ * 支出dateはJST日付のUTC深夜（例: 2026-07-01T00:00:00Z）として保存されているため、
+ * UTC深夜同士で比較できるよう、JST基準の月初・翌月初をUTC深夜のミリ秒として返す
+ * @param referenceMillis 基準時刻（エポックミリ秒）
+ * @returns monthStart（JST月初のUTC深夜ミリ秒）と nextMonthStart（翌月初）
+ */
+function getJSTMonthExpenseWindow(referenceMillis: number): { monthStart: number; nextMonthStart: number } {
+  const jst = new Date(referenceMillis + 9 * 60 * 60 * 1000);
+  const monthStart = Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), 1);
+  const nextMonthStart = Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth() + 1, 1);
+  return { monthStart, nextMonthStart };
+}
+
+/**
  * 全ユーザーの外食残高をリセット
+ * リセット前に先行登録済みの当月分の外食費用を差し引いた残高を設定する
  */
 export async function resetAllDiningBalances(monthlyBudget: number): Promise<void> {
   const db = getFirestore();
   const users = await getAllUsers();
 
+  // 現在のJST月のウィンドウで、リセット前に登録済みの外食費用をユーザー別に集計する
+  const { monthStart, nextMonthStart } = getJSTMonthExpenseWindow(Date.now());
+  const diningSnapshot = await db
+    .collection('expenses')
+    .where('category', '==', '外食費用')
+    .get();
+
+  const spentByUser = new Map<string, number>();
+  diningSnapshot.forEach(doc => {
+    const expense = doc.data();
+    const millis = (expense.date as Timestamp).toMillis();
+    if (millis >= monthStart && millis < nextMonthStart) {
+      spentByUser.set(expense.userId, (spentByUser.get(expense.userId) ?? 0) + expense.amount);
+    }
+  });
+
   const batch = db.batch();
   for (const user of users) {
     const userRef = db.collection('users').doc(user.id);
     batch.update(userRef, {
-      diningBalance: monthlyBudget,
+      diningBalance: monthlyBudget - (spentByUser.get(user.id) ?? 0),
       balanceResetAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
     });
@@ -175,7 +206,7 @@ export async function resetAllDiningBalances(monthlyBudget: number): Promise<voi
 
 /**
  * 全ユーザーの外食残高を新予算で再計算
- * 計算式: 新しい残高 = 新予算 - balanceResetAt以降の外食支出合計
+ * 計算式: 新しい残高 = 新予算 - balanceResetAtが属するJST月の外食支出合計
  * @returns 各ユーザーの旧残高と新残高
  */
 export async function recalculateAllDiningBalances(
@@ -188,19 +219,21 @@ export async function recalculateAllDiningBalances(
   for (const user of users) {
     const balanceResetAt = user.balanceResetAt;
 
-    // balanceResetAt以降の外食支出を取得
+    // balanceResetAtが属するJST月の外食支出を取得
     const expensesSnapshot = await db
       .collection('expenses')
       .where('userId', '==', user.id)
       .where('category', '==', '外食費用')
       .get();
 
-    // balanceResetAt以降の支出のみ合計
+    // balanceResetAtのJST月ウィンドウ内の支出のみ合計する
+    // （cron実行時刻と月初1日付の支出でミリ秒がずれ集計漏れするのを防ぐ）
+    const { monthStart, nextMonthStart } = getJSTMonthExpenseWindow(balanceResetAt.toMillis());
     let totalExpenses = 0;
     expensesSnapshot.forEach(doc => {
       const expense = doc.data();
-      const expenseDate = expense.date as Timestamp;
-      if (expenseDate.toMillis() >= balanceResetAt.toMillis()) {
+      const millis = (expense.date as Timestamp).toMillis();
+      if (millis >= monthStart && millis < nextMonthStart) {
         totalExpenses += expense.amount;
       }
     });

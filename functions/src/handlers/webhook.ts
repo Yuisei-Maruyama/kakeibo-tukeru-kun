@@ -904,16 +904,23 @@ async function handleAddCommand(
     );
 
     // Firestoreに保存（支払い者のuserIdを使用）
-    await saveExpense({
-      userId: payerUserId,
-      userName: payerName,
-      amount,
-      category: category,
-      storeName: details.content,
-      memo: details.memo,
-      date: Timestamp.fromDate(expenseDate),
-      calendarEventId,
-    });
+    // Firestoreはundefined値を拒否するため、メモ未入力時はフィールド自体を省略する
+    // 保存失敗時はカレンダーの孤児イベントを削除してからエラーを再throwする
+    try {
+      await saveExpense({
+        userId: payerUserId,
+        userName: payerName,
+        amount,
+        category: category,
+        storeName: details.content,
+        ...(details.memo ? { memo: details.memo } : {}),
+        date: Timestamp.fromDate(expenseDate),
+        calendarEventId,
+      });
+    } catch (error) {
+      await deleteCalendarEvent(calendarId, calendarEventId).catch(() => undefined);
+      throw error;
+    }
 
     // 外食費用の場合は支払い者の残高を更新（現在の月の支出のみ）
     let newBalance: number | undefined;
@@ -1021,16 +1028,23 @@ async function handleTravelCommand(
     );
 
     // Firestoreに保存（支払い者のuserIdを使用）
-    await saveExpense({
-      userId: payerUserId,
-      userName: payerName,
-      amount,
-      category: '旅行費用',
-      storeName,
-      memo: details.memo,
-      date: Timestamp.fromDate(expenseDate),
-      calendarEventId,
-    });
+    // Firestoreはundefined値を拒否するため、メモ未入力時はフィールド自体を省略する
+    // 保存失敗時はカレンダーの孤児イベントを削除してからエラーを再throwする
+    try {
+      await saveExpense({
+        userId: payerUserId,
+        userName: payerName,
+        amount,
+        category: '旅行費用',
+        storeName,
+        ...(details.memo ? { memo: details.memo } : {}),
+        date: Timestamp.fromDate(expenseDate),
+        calendarEventId,
+      });
+    } catch (error) {
+      await deleteCalendarEvent(calendarId, calendarEventId).catch(() => undefined);
+      throw error;
+    }
 
     // 返信メッセージを送信
     const responseMessage = createRegistrationMessage(
