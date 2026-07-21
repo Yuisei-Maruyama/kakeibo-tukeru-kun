@@ -116,6 +116,8 @@ type ReceiptNoteDraft = {
   category: ReceiptNoteCategory | "";
   userName: string;
   amount: number | "";
+  // 追加先の対象月。空文字は「表示中の月に追従」を意味する
+  month: string;
 };
 type ApiResponse<T> = {
   status: "ok" | "error";
@@ -479,6 +481,7 @@ export function KakeiboLiffApp() {
     category: "",
     userName: "",
     amount: "",
+    month: "",
   });
   // ログイン中ユーザー（null = プレビュー / 認証スキップ。確認操作は不可）
   const [currentUser, setCurrentUser] =
@@ -719,6 +722,32 @@ export function KakeiboLiffApp() {
     }
 
     return options;
+  }, [expenses, visibleDashboardUsers]);
+  // ホームの買い物・旅行合計に表示するユーザー別内訳（対象月の支出を支払い者ごとに集計）
+  const categorySpendingEntries = React.useMemo(() => {
+    const buildEntries = (category: ExpenseCategory) => {
+      const amounts = new Map<string, number>();
+      for (const user of visibleDashboardUsers) {
+        amounts.set(user.displayName, 0);
+      }
+      for (const expense of expenses) {
+        if (expense.category !== category) {
+          continue;
+        }
+        amounts.set(
+          expense.payer,
+          (amounts.get(expense.payer) ?? 0) + expense.amount,
+        );
+      }
+      return Array.from(amounts, ([displayName, amount]) => ({
+        displayName,
+        amount,
+      }));
+    };
+    return {
+      shopping: buildEntries("買い物費用"),
+      travel: buildEntries("旅行費用"),
+    };
   }, [expenses, visibleDashboardUsers]);
   const receiptNoteUsers = React.useMemo(() => {
     const userMap = new Map<string, ReceiptNoteUser>();
@@ -1553,6 +1582,9 @@ export function KakeiboLiffApp() {
       return;
     }
 
+    // 空文字は「表示中の月に追従」を意味するので、未選択なら表示中の月に追加する
+    const targetMonth = receiptNoteDraft.month || dashboardMonth;
+
     setIsMutating(true);
 
     try {
@@ -1561,7 +1593,7 @@ export function KakeiboLiffApp() {
         {
           method: "POST",
           body: JSON.stringify({
-            month: dashboardMonth,
+            month: targetMonth,
             category,
             userName,
             amount,
@@ -1576,9 +1608,14 @@ export function KakeiboLiffApp() {
       setReceiptNoteDraft((current) => ({
         ...current,
         amount: "",
+        month: "",
       }));
       setToast(result.message);
       celebrateSave();
+      // 別の月へ追加したときは、その月へ表示を切り替えて追加分を見えるようにする
+      if (targetMonth !== dashboardMonth) {
+        changeDashboardMonth(targetMonth);
+      }
     } catch (error) {
       showError(error instanceof Error ? error.message : "受領ノートの保存に失敗しました");
     } finally {
@@ -1988,12 +2025,14 @@ export function KakeiboLiffApp() {
                   value={formatCurrency(totals.shopping)}
                   yadon="back"
                   tone="coin"
+                  entries={categorySpendingEntries.shopping}
                 />
                 <MetricCard
                   label="旅行費用"
                   value={formatCurrency(totals.travel)}
                   yadon="galar"
                   tone="blue"
+                  entries={categorySpendingEntries.travel}
                 />
               </section>
 
@@ -3050,6 +3089,26 @@ function ReceiptNotePage({
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="対象月" htmlFor="receipt-note-add-month">
+              <select
+                id="receipt-note-add-month"
+                value={draft.month || month}
+                disabled={disabled}
+                onChange={(event) =>
+                  onDraftChange((current) => ({
+                    ...current,
+                    month: event.target.value,
+                  }))
+                }
+                className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+              >
+                {monthOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {formatYearMonthLabel(option)}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="カテゴリー" htmlFor="receipt-note-add-category">
               <ReceiptNoteCategorySelect
                 id="receipt-note-add-category"
@@ -3827,29 +3886,51 @@ function MetricCard({
   value,
   yadon,
   tone,
+  entries,
 }: {
   label: string;
   value: string;
   yadon: YadonVariant;
   tone: "green" | "coin" | "blue";
+  entries?: { displayName: string; amount: number }[];
 }) {
   return (
     <Card>
-      <CardContent className="flex items-center gap-4 p-5">
-        <div
-          className={cn(
-            "grid size-12 place-items-center rounded-md",
-            tone === "green" && "bg-ledger-mint text-primary",
-            tone === "coin" && "bg-secondary text-ledger-coin",
-            tone === "blue" && "bg-accent/10 text-accent",
-          )}
-        >
-          <YadonMark variant={yadon} className="size-11" />
+      <CardContent className="grid gap-4 p-5">
+        <div className="flex items-center gap-4">
+          <div
+            className={cn(
+              "grid size-12 shrink-0 place-items-center rounded-md",
+              tone === "green" && "bg-ledger-mint text-primary",
+              tone === "coin" && "bg-secondary text-ledger-coin",
+              tone === "blue" && "bg-accent/10 text-accent",
+            )}
+          >
+            <YadonMark variant={yadon} className="size-11" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-muted-foreground">{label}</p>
+            <p className="text-glow truncate text-2xl font-black tracking-normal">{value}</p>
+          </div>
         </div>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-muted-foreground">{label}</p>
-          <p className="text-glow truncate text-2xl font-black tracking-normal">{value}</p>
-        </div>
+        {entries?.length ? (
+          <div className="grid gap-2">
+            {entries.map((entry) => (
+              <div
+                key={entry.displayName}
+                className="flex min-w-0 items-center justify-between gap-3 rounded-md border bg-background/70 px-3 py-2"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <UserRound className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                  <span className="min-w-0 truncate font-semibold">{entry.displayName}</span>
+                </div>
+                <span className="text-glow shrink-0 font-black tabular-nums">
+                  {formatCurrency(entry.amount)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );
