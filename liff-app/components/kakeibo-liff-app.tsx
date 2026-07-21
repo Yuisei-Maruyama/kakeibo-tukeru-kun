@@ -161,13 +161,13 @@ const receiptNoteCategories: {
   {
     value: "shoppingSettlement",
     label: "買い物費用精算",
-    description: "買い物費用のユーザー別合計",
+    description: "支払額が少ない側が差額の半分を返金",
     expenseCategory: "買い物費用",
   },
   {
     value: "travelSettlement",
     label: "旅行費用精算",
-    description: "旅行費用のユーザー別合計",
+    description: "支払額が少ない側が差額の半分を返金",
     expenseCategory: "旅行費用",
   },
   {
@@ -742,13 +742,16 @@ export function KakeiboLiffApp() {
     const expenseAmountMap = new Map<string, number>();
     const diningBalanceMap = new Map<string, number>();
     const rows: ReceiptNoteRow[] = [];
-    const savedReceiptNoteKeys = new Set<string>();
     // 外食貯金の自動行抑止に使う「アクティブな保存済みノート」だけのキー
     const activeReceiptNoteKeys = new Set<string>();
+    // 自動集計由来（source: summary）の保存済みノートがあるカテゴリー。
+    // 精算カテゴリーはこの集合にある月は再導出しない（削除済みノートの復活防止を含む）
+    const summaryNoteCategories = new Set<ReceiptNoteCategory>();
 
     for (const receiptNote of savedReceiptNotes) {
-      savedReceiptNoteKeys.add(`${receiptNote.category}:${receiptNote.userId}`);
-      savedReceiptNoteKeys.add(`${receiptNote.category}:${receiptNote.userName}`);
+      if (receiptNote.source !== "manual") {
+        summaryNoteCategories.add(receiptNote.category);
+      }
 
       if (!receiptNote.isActive) {
         continue;
@@ -795,21 +798,64 @@ export function KakeiboLiffApp() {
 
       const isDiningSaving = category.value === "diningSaving";
 
+      // 買い物・旅行の精算は @集計 と同じく「支払額が少ない側が差額の半分を返金する」1 行にする
+      if (!isDiningSaving) {
+        // 保存済みの自動集計ノートがその月の精算を表現しているときは再導出しない
+        if (
+          receiptNoteUsers.length < 2 ||
+          summaryNoteCategories.has(category.value)
+        ) {
+          continue;
+        }
+
+        const [firstUser, secondUser] = receiptNoteUsers;
+        const firstTotal =
+          expenseAmountMap.get(
+            createReceiptExpenseKey(category.expenseCategory, firstUser.name),
+          ) ?? 0;
+        const secondTotal =
+          expenseAmountMap.get(
+            createReceiptExpenseKey(category.expenseCategory, secondUser.name),
+          ) ?? 0;
+        const refundAmount = Math.round(Math.abs(firstTotal - secondTotal) / 2);
+
+        // 支払額が同額なら精算不要（@集計の「精算の必要はありません」と同じ）
+        if (refundAmount === 0) {
+          continue;
+        }
+
+        const payer = firstTotal < secondTotal ? firstUser : secondUser;
+        const key = createReceiptNoteKey(dashboardMonth, category.value, payer.name);
+        if (receiptNoteDeletedKeys[key]) {
+          continue;
+        }
+
+        rows.push({
+          key,
+          category: receiptNoteRowCategories[key] ?? category.value,
+          user: {
+            id: payer.id,
+            name: receiptNoteUserNames[key] ?? payer.name,
+          },
+          amount: receiptNoteAmounts[key] ?? refundAmount,
+          confirmations: mergeRowConfirmations(
+            {},
+            receiptNoteConfirmOverrides[key],
+            currentUser?.id,
+          ),
+          isManual: false,
+        });
+        continue;
+      }
+
+      // 外食貯金はユーザーごとに行を作る
       for (const user of receiptNoteUsers) {
         const key = createReceiptNoteKey(dashboardMonth, category.value, user.name);
         // 外食貯金は 0 円・マイナスでも常時表示するため、アクティブな保存済みノートが
         // あるときだけ抑止する（論理削除済みノート・削除済みキーでは抑止しない）
-        if (isDiningSaving) {
-          if (
-            activeReceiptNoteKeys.has(`${category.value}:${user.id}`) ||
-            activeReceiptNoteKeys.has(`${category.value}:${user.name}`)
-          ) {
-            continue;
-          }
-        } else if (
-          receiptNoteDeletedKeys[key] ||
-          savedReceiptNoteKeys.has(`${category.value}:${user.id}`) ||
-          savedReceiptNoteKeys.has(`${category.value}:${user.name}`)
+        if (
+          activeReceiptNoteKeys.has(`${category.value}:${user.id}`) ||
+          activeReceiptNoteKeys.has(`${category.value}:${user.name}`)
         ) {
           continue;
         }
@@ -821,11 +867,9 @@ export function KakeiboLiffApp() {
         // 当月は現在残高を、過去月は「予算 − その月の外食支出合計」を初期額にする（負値も通す）
         const fallbackDiningSaving =
           budget - (expenseAmountMap.get(categoryExpenseKey) ?? 0);
-        const defaultAmount = isDiningSaving
-          ? isCurrentMonth
-            ? diningBalanceMap.get(user.name) ?? fallbackDiningSaving
-            : fallbackDiningSaving
-          : expenseAmountMap.get(categoryExpenseKey) ?? 0;
+        const defaultAmount = isCurrentMonth
+          ? diningBalanceMap.get(user.name) ?? fallbackDiningSaving
+          : fallbackDiningSaving;
         const userName = receiptNoteUserNames[key] ?? user.name;
 
         rows.push({
@@ -3305,6 +3349,7 @@ function ReceiptNoteRowItem({
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
   const [editOpen, setEditOpen] = React.useState(false);
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [draft, setDraft] = React.useState<{
     category: ReceiptNoteCategory;
     userName: string;
@@ -3328,6 +3373,23 @@ function ReceiptNoteRowItem({
   const isDiningSaving = row.category === "diningSaving";
   // 外食貯金の自動行・自動由来の保存行は削除しても自動行が復活するため削除ボタンを隠す
   const canDelete = !(isDiningSaving && !row.isManual);
+  const isSettlement =
+    row.category === "shoppingSettlement" || row.category === "travelSettlement";
+  // 精算行の返金先（2 人グループの相手側）。手動追加行には表示しない
+  const settlementRefundTo =
+    isSettlement && !row.isManual && groupUsers.length === 2
+      ? groupUsers.find((user) => user.displayName !== row.user.name)
+      : undefined;
+  // 確認モーダルの本文はカテゴリー別に文面を変える
+  const confirmMessage = isDiningSaving
+    ? row.amount > 0
+      ? `外食費用を ${formatCurrency(row.amount)} 貯金しましたか？`
+      : row.amount < 0
+        ? `予算超過分 ${formatCurrency(Math.abs(row.amount))} を ${row.user.name} が負担することを確認しましたか？`
+        : "外食貯金が 0 円であることを確認しましたか？"
+    : settlementRefundTo
+      ? `${row.user.name} から ${settlementRefundTo.displayName} に ${formatCurrency(row.amount)} 返金しましたか？`
+      : `${row.user.name}（${formatCurrency(row.amount)}）を確認済みにしますか？`;
 
   return (
     <div
@@ -3344,7 +3406,14 @@ function ReceiptNoteRowItem({
           checked={selfConfirmed}
           disabled={disabled || !currentUser}
           aria-label={`${row.user.name}を自分が確認済みにする`}
-          onChange={(event) => onConfirmChange(row, event.target.checked)}
+          onChange={(event) => {
+            // 確認を付けるときはモーダルで確認を取り、解除は即時反映する
+            if (event.target.checked) {
+              setConfirmOpen(true);
+            } else {
+              onConfirmChange(row, false);
+            }
+          }}
         />
         <span className="min-w-0 flex-1 truncate font-semibold">
           {row.user.name}
@@ -3525,7 +3594,7 @@ function ReceiptNoteRowItem({
           })}
         </div>
       ) : null}
-      {/* 外食貯金の予算超過・使い切りを注記で補足する */}
+      {/* 外食貯金の予算超過・使い切り、精算の返金先を注記で補足する */}
       {isDiningSaving && row.amount < 0 ? (
         <p className="pl-8 text-xs font-semibold text-destructive">
           予算超過分 {formatCurrency(Math.abs(row.amount))} は {row.user.name} が負担
@@ -3534,7 +3603,39 @@ function ReceiptNoteRowItem({
         <p className="pl-8 text-xs text-muted-foreground">
           外食予算を使い切ったため今月の貯金はありません
         </p>
+      ) : settlementRefundTo ? (
+        <p className="pl-8 text-xs font-semibold">
+          {row.user.name} が {settlementRefundTo.displayName} に{" "}
+          {formatCurrency(row.amount)} を返金
+        </p>
       ) : null}
+      {/* チェックを付けるときはこのモーダルで確認を取ってから記録する */}
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>受領確認</DialogTitle>
+            <DialogDescription>{confirmMessage}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="outline">
+                キャンセル
+              </Button>
+            </DialogClose>
+            <Button
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                onConfirmChange(row, true);
+                setConfirmOpen(false);
+              }}
+            >
+              <ButtonIcon busy={disabled} icon={CheckCircle2} />
+              確認する
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
