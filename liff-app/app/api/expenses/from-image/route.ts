@@ -3,6 +3,12 @@ import { GoogleGenAI } from "@google/genai";
 import { google, type calendar_v3 } from "googleapis";
 import { NextRequest, NextResponse } from "next/server";
 import { createFirestoreClient, createGoogleAuth } from "@/lib/google-server";
+import {
+  assertDateString,
+  assertPositiveAmount,
+  deleteCalendarEvent,
+  isExpenseCategory,
+} from "@/lib/liff-server";
 import type { DashboardExpenseCategory, DashboardUser } from "@/types/dashboard";
 
 export const runtime = "nodejs";
@@ -245,9 +251,17 @@ async function analyzeReceiptImage(file: File): Promise<AnalysisResult> {
     throw new Error(result.reason || result.error);
   }
 
-  if (!result.date || !result.amount || !result.category || !result.storeName) {
+  assertDateString(result.date);
+  // 丸め済みの金額で上書きし、以降のカレンダー・保存処理と整合させる
+  result.amount = assertPositiveAmount(result.amount);
+  if (!isExpenseCategory(result.category)) {
+    throw new Error("画像解析結果のカテゴリーが不正です");
+  }
+  const storeName = result.storeName?.trim();
+  if (!storeName) {
     throw new Error("画像解析結果に必須項目がありません");
   }
+  result.storeName = storeName;
 
   return result;
 }
@@ -289,7 +303,12 @@ async function createCalendarEvent(
   return response.data.id;
 }
 
-async function saveExpense(user: FirestoreUser, result: AnalysisResult, calendarEventId: string) {
+async function saveExpense(
+  user: FirestoreUser,
+  result: AnalysisResult,
+  calendarId: string,
+  calendarEventId: string,
+) {
   const db = getFirestore();
   const expenseRef = db.collection("expenses").doc();
   const expense = {
@@ -304,7 +323,12 @@ async function saveExpense(user: FirestoreUser, result: AnalysisResult, calendar
     createdAt: Timestamp.now(),
   };
 
-  await expenseRef.set(expense);
+  try {
+    await expenseRef.set(expense);
+  } catch (error) {
+    await deleteCalendarEvent(calendarId, calendarEventId).catch(() => undefined);
+    throw error;
+  }
 
   let diningBalance: number | undefined;
   if (result.category === "外食費用" && isCurrentJSTMonth(result.date)) {
@@ -343,8 +367,9 @@ export async function POST(request: NextRequest) {
 
     const result = await analyzeReceiptImage(file);
     const settings = await getSettings();
-    const calendarEventId = await createCalendarEvent(getCalendarId(settings), user, result);
-    const { expense, diningBalance } = await saveExpense(user, result, calendarEventId);
+    const calendarId = getCalendarId(settings);
+    const calendarEventId = await createCalendarEvent(calendarId, user, result);
+    const { expense, diningBalance } = await saveExpense(user, result, calendarId, calendarEventId);
     const users = await getDashboardUsers(user.groupId || settings.lineGroupId || "");
 
     return NextResponse.json({

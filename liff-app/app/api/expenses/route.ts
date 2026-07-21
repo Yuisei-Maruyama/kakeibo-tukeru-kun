@@ -74,7 +74,8 @@ export async function POST(request: NextRequest) {
       amount: body.amount,
       category: body.category,
       storeName: body.storeName,
-      memo: body.memo,
+      // Firestore は undefined 値を拒否するため、メモ未入力時はフィールド自体を省略する
+      ...(body.memo ? { memo: body.memo } : {}),
       date: dateStringToTimestamp(body.date),
       calendarEventId,
       createdAt: Timestamp.now(),

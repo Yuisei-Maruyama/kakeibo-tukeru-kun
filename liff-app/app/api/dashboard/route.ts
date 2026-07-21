@@ -2,6 +2,7 @@ import { Firestore, Timestamp } from "@google-cloud/firestore";
 import { google, type calendar_v3 } from "googleapis";
 import { NextRequest, NextResponse } from "next/server";
 import { createFirestoreClient, createGoogleAuth } from "@/lib/google-server";
+import { normalizeReceiptNoteConfirmations } from "@/lib/liff-server";
 import type {
   DashboardCalendarEvent,
   DashboardData,
@@ -9,7 +10,6 @@ import type {
   DashboardExpenseCategory,
   DashboardRent,
   DashboardReceiptNote,
-  DashboardReceiptNoteConfirmation,
   DashboardSettings,
   DashboardSubscription,
   DashboardUser,
@@ -47,6 +47,7 @@ const receiptNoteCategories = new Set<ReceiptNoteCategory>([
   "diningSaving",
   "shoppingSettlement",
   "travelSettlement",
+  "other",
 ]);
 
 function getFirestore() {
@@ -74,12 +75,12 @@ function createUnavailable(message: string): DashboardData {
     message,
     month: `${now.year}-${String(now.month).padStart(2, "0")}`,
     users: [],
+    currentUser: null,
     expenses: [],
     calendarEvents: [],
     subscriptions: [],
     rent: null,
     receiptNotes: [],
-    receiptNoteConfirmations: [],
     settings: {
       monthlyBudget: 50000,
       lineGroupId: "",
@@ -278,7 +279,7 @@ async function authorizeUser(request: NextRequest) {
     );
   }
 
-  const user = userDoc.data() as FirestoreUser;
+  const user = { id: userDoc.id, ...userDoc.data() } as FirestoreUser;
   if (!user.isActive) {
     throw new Error("このユーザーは無効です");
   }
@@ -424,6 +425,7 @@ async function getRent(groupId: string): Promise<DashboardRent> {
 async function getReceiptNotes(
   groupId: string,
   month: string,
+  groupUserIds: string[],
 ): Promise<DashboardReceiptNote[]> {
   const snapshot = await getFirestore()
     .collection("receiptNotes")
@@ -441,6 +443,7 @@ async function getReceiptNotes(
       userName: String(receiptNote.userName ?? ""),
       amount: Number(receiptNote.amount ?? 0),
       received: Boolean(receiptNote.received),
+      confirmations: normalizeReceiptNoteConfirmations(receiptNote, groupUserIds),
       source:
         receiptNote.source === "summary"
           ? "summary" as const
@@ -450,29 +453,6 @@ async function getReceiptNotes(
     .sort((a, b) => a.category.localeCompare(b.category));
 }
 
-async function getReceiptNoteConfirmations(
-  groupId: string,
-  month: string,
-): Promise<DashboardReceiptNoteConfirmation[]> {
-  const snapshot = await getFirestore()
-    .collection("receiptNoteConfirmations")
-    .where("month", "==", month)
-    .get();
-
-  return snapshot.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }) as Record<string, unknown>)
-    .filter((confirmation) => !groupId || confirmation.groupId === groupId)
-    .map((confirmation) => ({
-      id: String(confirmation.id),
-      month: String(confirmation.month ?? ""),
-      category: getReceiptNoteCategory(confirmation.category),
-      confirmedByUserId: String(confirmation.confirmedByUserId ?? ""),
-      confirmedBy: String(confirmation.confirmedBy ?? ""),
-      date: formatTimestampDate(confirmation.date),
-      checked: Boolean(confirmation.checked),
-    }));
-}
-
 export async function GET(request: NextRequest) {
   try {
     const authorizedUser = await authorizeUser(request);
@@ -480,24 +460,28 @@ export async function GET(request: NextRequest) {
     const users = await getUsers(authorizedUser.groupId);
     const settings = await getSettings(users);
     const groupId = authorizedUser.groupId || settings.lineGroupId;
-    const groupUserIds = new Set(users.map((user) => user.id));
+    // authorizedUser 自身に groupId が無く settings 側で解決できた場合は、
+    // 全グループのユーザーが返らないよう解決後の groupId で絞り込む
+    const scopedUsers =
+      !authorizedUser.groupId && groupId
+        ? users.filter((user) => user.groupId === groupId)
+        : users;
+    const groupUserIds = new Set(scopedUsers.map((user) => user.id));
     const monthLabel = `${year}-${String(month).padStart(2, "0")}`;
+    // 確認操作の主体。認証スキップ時（auth-disabled）はクライアントで操作を無効化するため null
+    const currentUser =
+      authorizedUser.id === "auth-disabled"
+        ? null
+        : { id: authorizedUser.id, displayName: authorizedUser.displayName };
 
-    const [
-      expenses,
-      calendarEvents,
-      subscriptions,
-      rent,
-      receiptNotes,
-      receiptNoteConfirmations,
-    ] = await Promise.all([
-      getExpenses(year, month, groupUserIds),
-      getCalendarEvents(settings.calendarId, year, month),
-      getSubscriptions(groupId),
-      getRent(groupId),
-      getReceiptNotes(groupId, monthLabel),
-      getReceiptNoteConfirmations(groupId, monthLabel),
-    ]);
+    const [expenses, calendarEvents, subscriptions, rent, receiptNotes] =
+      await Promise.all([
+        getExpenses(year, month, groupUserIds),
+        getCalendarEvents(settings.calendarId, year, month),
+        getSubscriptions(groupId),
+        getRent(groupId),
+        getReceiptNotes(groupId, monthLabel, [...groupUserIds]),
+      ]);
 
     const totals = expenses.reduce(
       (acc, expense) => {
@@ -519,13 +503,13 @@ export async function GET(request: NextRequest) {
       source: "live",
       message: "Firestore と Google Calendar から取得しました",
       month: monthLabel,
-      users,
+      users: scopedUsers,
+      currentUser,
       expenses,
       calendarEvents,
       subscriptions,
       rent,
       receiptNotes,
-      receiptNoteConfirmations,
       settings,
       totals,
     } satisfies DashboardData, {

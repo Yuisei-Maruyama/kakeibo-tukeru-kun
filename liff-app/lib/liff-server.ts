@@ -8,7 +8,6 @@ import type {
   DashboardExpenseCategory,
   DashboardRent,
   DashboardReceiptNote,
-  DashboardReceiptNoteConfirmation,
   DashboardSubscription,
   DashboardUser,
   ReceiptNoteCategory,
@@ -139,21 +138,31 @@ export function assertDateString(value: unknown, label = "日付") {
 }
 
 export function assertPositiveAmount(value: unknown, label = "金額") {
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount <= 0) {
+  // boolean は Number(true)=1 とすり抜けるため明示的に拒否する
+  if (typeof value === "boolean") {
     throw new Error(`${label}は 1 円以上で入力してください`);
   }
 
-  return Math.round(amount);
+  // 丸めてから判定し、0.5 未満が 0 円になるすり抜けを防ぐ
+  const amount = Math.round(Number(value));
+  if (!Number.isFinite(amount) || amount < 1) {
+    throw new Error(`${label}は 1 円以上で入力してください`);
+  }
+
+  return amount;
 }
 
 export function assertNonNegativeAmount(value: unknown, label = "金額") {
-  const amount = Number(value);
+  if (typeof value === "boolean") {
+    throw new Error(`${label}は 0 円以上で入力してください`);
+  }
+
+  const amount = Math.round(Number(value));
   if (!Number.isFinite(amount) || amount < 0) {
     throw new Error(`${label}は 0 円以上で入力してください`);
   }
 
-  return Math.round(amount);
+  return amount;
 }
 
 export function assertReceiptNoteCategory(value: unknown) {
@@ -209,6 +218,25 @@ export function isCurrentJSTMonth(date: string) {
   const month = parts.find((part) => part.type === "month")?.value;
 
   return date.slice(0, 7) === `${year}-${month}`;
+}
+
+/**
+ * JST の今日を "YYYY-MM-DD" 形式で返す。
+ * @returns JST 基準の当日日付文字列
+ */
+export function todayJstDateString() {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  return `${year}-${month}-${day}`;
 }
 
 export function buildIntervalLabel(unit: string, value: number) {
@@ -693,6 +721,11 @@ export function buildScheduleCalendarRequestBody(
   const startTime = payload.startTime ? normalizeTime(payload.startTime) : "";
   const endTime = payload.endTime ? normalizeTime(payload.endTime) : "";
 
+  // 終了時刻だけ指定されると無言で終日イベント化するため拒否する
+  if (!startTime && endTime) {
+    throw new Error("終了時刻を指定する場合は開始時刻も入力してください");
+  }
+
   if (!title) {
     throw new Error("予定の内容を入力してください");
   }
@@ -889,9 +922,46 @@ export function mapRentForClient(rent: Record<string, unknown>): DashboardRent {
   };
 }
 
+/**
+ * 受領ノートの確認マップを正規化する。
+ * confirmations があれば値を文字列へ揃え、無く received=true の旧データは
+ * グループ全ユーザーを "legacy"（日付なしマーカー）として合成する。
+ * @param receiptNote Firestore の受領ノートデータ
+ * @param groupUserIds 旧データ互換の合成に使うグループ全ユーザーの ID
+ * @returns userId → "YYYY-MM-DD" | "legacy" の確認マップ
+ */
+export function normalizeReceiptNoteConfirmations(
+  receiptNote: Record<string, unknown>,
+  groupUserIds: string[],
+): Record<string, string> {
+  const raw = receiptNote.confirmations;
+  if (raw && typeof raw === "object") {
+    const result: Record<string, string> = {};
+    for (const [userId, value] of Object.entries(raw as Record<string, unknown>)) {
+      result[userId] = typeof value === "string" && value ? value : "legacy";
+    }
+
+    return result;
+  }
+
+  if (receiptNote.received === true) {
+    return Object.fromEntries(groupUserIds.map((userId) => [userId, "legacy"]));
+  }
+
+  return {};
+}
+
+/**
+ * Firestore の受領ノート doc をクライアント向けに整形する。
+ * @param id 受領ノート doc ID
+ * @param receiptNote Firestore の受領ノートデータ
+ * @param groupUserIds 旧データ互換の confirmations 合成に使うグループ全ユーザーの ID
+ * @returns クライアント向け受領ノート
+ */
 export function mapReceiptNoteForClient(
   id: string,
   receiptNote: Record<string, unknown>,
+  groupUserIds: string[],
 ): DashboardReceiptNote {
   return {
     id,
@@ -901,23 +971,9 @@ export function mapReceiptNoteForClient(
     userName: String(receiptNote.userName ?? ""),
     amount: Number(receiptNote.amount ?? 0),
     received: Boolean(receiptNote.received),
+    confirmations: normalizeReceiptNoteConfirmations(receiptNote, groupUserIds),
     source: receiptNote.source === "summary" ? "summary" : "manual",
     isActive: receiptNote.isActive !== false,
-  };
-}
-
-export function mapReceiptNoteConfirmationForClient(
-  id: string,
-  confirmation: Record<string, unknown>,
-): DashboardReceiptNoteConfirmation {
-  return {
-    id,
-    month: String(confirmation.month ?? ""),
-    category: assertReceiptNoteCategory(confirmation.category),
-    confirmedByUserId: String(confirmation.confirmedByUserId ?? ""),
-    confirmedBy: String(confirmation.confirmedBy ?? ""),
-    date: formatTimestampDate(confirmation.date),
-    checked: Boolean(confirmation.checked),
   };
 }
 
@@ -957,19 +1013,87 @@ export async function applyDiningBalanceForDelete(expense: StoredExpense) {
   return (await adjustDiningBalance(expense.userId, expense.amount)) ?? undefined;
 }
 
-export async function applyDiningBalanceForUpdate(before: StoredExpense, after: StoredExpense) {
-  const beforeDate = formatTimestampDate(before.date);
-  const afterDate = formatTimestampDate(after.date);
+/**
+ * 支出 doc の更新と外食費用の残高調整を単一トランザクションで実行する。
+ * doc 書き込みと残高調整を別トランザクションに分けると途中失敗・再送で残高がずれるため、
+ * 関係ユーザーの残高デルタを read-before-write でまとめて適用する。
+ * @param expenseId 更新対象の支出 doc ID
+ * @param before 更新前の支出
+ * @param after 更新後の支出
+ * @returns after が当月の外食費用なら after.userId の新残高、そうでなければ undefined
+ */
+export async function updateExpenseWithBalance(
+  expenseId: string,
+  before: StoredExpense,
+  after: StoredExpense,
+) {
+  const db = getFirestore();
+  const expenseRef = db.collection("expenses").doc(expenseId);
 
-  if (before.category === "外食費用" && isCurrentJSTMonth(beforeDate)) {
-    await adjustDiningBalance(before.userId, before.amount);
+  const beforeApplies =
+    before.category === "外食費用" && isCurrentJSTMonth(formatTimestampDate(before.date));
+  const afterApplies =
+    after.category === "外食費用" && isCurrentJSTMonth(formatTimestampDate(after.date));
+
+  // 同一ユーザーの調整は合算して 1 回の update にまとめる
+  const deltas = new Map<string, number>();
+  if (beforeApplies) {
+    deltas.set(before.userId, (deltas.get(before.userId) ?? 0) + before.amount);
+  }
+  if (afterApplies) {
+    deltas.set(after.userId, (deltas.get(after.userId) ?? 0) - after.amount);
   }
 
-  if (after.category !== "外食費用" || !isCurrentJSTMonth(afterDate)) {
-    return undefined;
-  }
+  return db.runTransaction(async (transaction) => {
+    // Firestore は read-before-write のため、update より先に全ユーザー doc を読む
+    const userDocs = await Promise.all(
+      [...deltas.keys()].map(async (userId) => {
+        const ref = db.collection("users").doc(userId);
+        return { userId, ref, snapshot: await transaction.get(ref) };
+      }),
+    );
 
-  return (await adjustDiningBalance(after.userId, -after.amount)) ?? undefined;
+    transaction.update(expenseRef, {
+      userId: after.userId,
+      userName: after.userName,
+      amount: after.amount,
+      category: after.category,
+      storeName: after.storeName,
+      memo: after.memo ?? null,
+      date: after.date,
+      calendarEventId: after.calendarEventId,
+    });
+
+    const now = Timestamp.now();
+    const newBalances = new Map<string, number>();
+    for (const { userId, ref, snapshot } of userDocs) {
+      if (!snapshot.exists) {
+        continue;
+      }
+
+      const newBalance = Number(snapshot.data()?.diningBalance ?? 0) + (deltas.get(userId) ?? 0);
+      transaction.update(ref, { diningBalance: newBalance, updatedAt: now });
+      newBalances.set(userId, newBalance);
+    }
+
+    return afterApplies ? newBalances.get(after.userId) : undefined;
+  });
+}
+
+/**
+ * balanceResetAt が属する JST 月の集計ウィンドウ [月初, 翌月初) を UTC ミリ秒で返す。
+ * 支出 date は JST 日付の UTC 深夜（例: 2026-07-01T00:00:00Z）で保存される一方、
+ * balanceResetAt は cron 実行時刻（数秒後）のため、時刻での閾値比較だと月初 1 日付の
+ * 支出が漏れる。月単位のウィンドウで判定してこの取りこぼしを防ぐ。
+ * @param balanceResetAt 残高リセット時刻
+ * @returns 集計対象の月初・翌月初を表す UTC ミリ秒
+ */
+function getBalanceResetMonthWindow(balanceResetAt: Timestamp) {
+  const jst = new Date(balanceResetAt.toMillis() + 9 * 60 * 60 * 1000);
+  const monthStart = Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), 1);
+  const nextMonthStart = Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth() + 1, 1);
+
+  return { monthStart, nextMonthStart };
 }
 
 export async function recalculateDiningBalances(newBudget: number) {
@@ -977,7 +1101,9 @@ export async function recalculateDiningBalances(newBudget: number) {
   const users = await getActiveUsers();
 
   return Promise.all(users.map(async (user): Promise<DashboardUser> => {
-    const balanceResetAt = user.balanceResetAt ?? Timestamp.fromDate(new Date(0));
+    // balanceResetAt 未設定時は現在の JST 月を対象にする（作成時の減算ルールと同じ範囲）
+    const balanceResetAt = user.balanceResetAt ?? Timestamp.now();
+    const { monthStart, nextMonthStart } = getBalanceResetMonthWindow(balanceResetAt);
     const expensesSnapshot = await db
       .collection("expenses")
       .where("userId", "==", user.id)
@@ -988,7 +1114,12 @@ export async function recalculateDiningBalances(newBudget: number) {
     expensesSnapshot.forEach((doc) => {
       const expense = doc.data();
       const expenseDate = expense.date as Timestamp | undefined;
-      if (expenseDate && expenseDate.toMillis() >= balanceResetAt.toMillis()) {
+      if (!expenseDate) {
+        return;
+      }
+
+      const millis = expenseDate.toMillis();
+      if (millis >= monthStart && millis < nextMonthStart) {
         totalExpenses += Number(expense.amount ?? 0);
       }
     });

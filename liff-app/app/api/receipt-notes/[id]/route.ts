@@ -2,6 +2,7 @@ import { Timestamp } from "@google-cloud/firestore";
 import { NextRequest, NextResponse } from "next/server";
 import {
   assertNonNegativeAmount,
+  assertPositiveAmount,
   assertReceiptNoteCategory,
   ensureGroupReceiptNoteAccess,
   getAuthorizedContext,
@@ -21,15 +22,17 @@ type ReceiptNoteRequestBody = {
   category?: string;
   userName?: string;
   amount?: number;
-  received?: boolean;
 };
 
-function parseReceiptNoteBody(body: ReceiptNoteRequestBody) {
+function parseReceiptNoteBody(body: ReceiptNoteRequestBody, source: string) {
   return {
     category: assertReceiptNoteCategory(body.category),
     userName: body.userName?.trim() || "@自分",
-    amount: assertNonNegativeAmount(body.amount),
-    received: Boolean(body.received),
+    // 手動ノートは 1 円以上を必須にする（自動集計行は 0 円を許容）
+    amount:
+      source === "manual"
+        ? assertPositiveAmount(body.amount)
+        : assertNonNegativeAmount(body.amount),
   };
 }
 
@@ -51,14 +54,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const before = await getReceiptNote(id);
     ensureGroupReceiptNoteAccess(before, authorizedContext);
 
-    const body = parseReceiptNoteBody((await request.json()) as ReceiptNoteRequestBody);
+    // 対象ノートの source を引き継いで金額バリデーションを切り替える
+    const source = before.source === "summary" ? "summary" : "manual";
+    const body = parseReceiptNoteBody((await request.json()) as ReceiptNoteRequestBody, source);
     const user = resolveReceiptNoteUser(body, authorizedContext);
+    const groupUserIds = authorizedContext.users.map((item) => item.id);
+    // 金額・カテゴリー・ユーザー名編集は確認状態（confirmations / received）に触れない
     const updates = {
       category: body.category,
       userId: user.id,
       userName: user.displayName,
       amount: body.amount,
-      received: body.received,
       updatedAt: Timestamp.now(),
     };
 
@@ -67,7 +73,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     return NextResponse.json({
       status: "ok",
       message: "Firestore の受領ノートを更新しました",
-      receiptNote: mapReceiptNoteForClient(id, { ...before, ...updates }),
+      receiptNote: mapReceiptNoteForClient(id, { ...before, ...updates }, groupUserIds),
     });
   } catch (error) {
     return NextResponse.json(
@@ -97,10 +103,11 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     return NextResponse.json({
       status: "ok",
       message: "Firestore の受領ノートを削除しました",
-      receiptNote: mapReceiptNoteForClient(id, {
-        ...before,
-        isActive: false,
-      }),
+      receiptNote: mapReceiptNoteForClient(
+        id,
+        { ...before, isActive: false },
+        authorizedContext.users.map((item) => item.id),
+      ),
     });
   } catch (error) {
     return NextResponse.json(

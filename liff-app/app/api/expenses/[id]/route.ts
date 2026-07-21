@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   applyDiningBalanceForDelete,
-  applyDiningBalanceForUpdate,
   assertDateString,
   assertPositiveAmount,
   createExpenseCalendarEvent,
@@ -17,6 +16,7 @@ import {
   mapExpenseForClient,
   resolveUserByName,
   updateExpenseCalendarEvent,
+  updateExpenseWithBalance,
   type ExpenseCategory,
   type StoredExpense,
 } from "@/lib/liff-server";
@@ -101,17 +101,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       calendarEventId,
     };
 
-    await getFirestore().collection("expenses").doc(id).update({
-      userId: after.userId,
-      userName: after.userName,
-      amount: after.amount,
-      category: after.category,
-      storeName: after.storeName,
-      memo: after.memo ?? null,
-      date: after.date,
-      calendarEventId: after.calendarEventId,
-    });
-    const diningBalance = await applyDiningBalanceForUpdate(before, after);
+    const diningBalance = await updateExpenseWithBalance(id, before, after);
     const users = await getDashboardUsers(authorizedContext.groupId);
 
     return NextResponse.json({

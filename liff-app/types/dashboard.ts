@@ -60,19 +60,12 @@ export type DashboardReceiptNote = {
   userId: string;
   userName: string;
   amount: number;
+  // 互換ミラー: グループ全員が confirmations に存在すれば true
   received: boolean;
+  // userId → 確認日（"YYYY-MM-DD"）。旧データ互換は "legacy"
+  confirmations: Record<string, string>;
   source: "manual" | "summary";
   isActive: boolean;
-};
-
-export type DashboardReceiptNoteConfirmation = {
-  id: string;
-  month: string;
-  category: ReceiptNoteCategory;
-  confirmedByUserId: string;
-  confirmedBy: string;
-  date: string;
-  checked: boolean;
 };
 
 export type DashboardSettings = {
@@ -88,12 +81,13 @@ export type DashboardData = {
   message: string;
   month: string;
   users: DashboardUser[];
+  // 確認操作の主体となる認証ユーザー。認証スキップ時は null
+  currentUser: { id: string; displayName: string } | null;
   expenses: DashboardExpense[];
   calendarEvents: DashboardCalendarEvent[];
   subscriptions: DashboardSubscription[];
   rent: DashboardRent;
   receiptNotes: DashboardReceiptNote[];
-  receiptNoteConfirmations: DashboardReceiptNoteConfirmation[];
   settings: DashboardSettings;
   totals: {
     dining: number;

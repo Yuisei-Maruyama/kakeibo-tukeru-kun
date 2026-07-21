@@ -10,6 +10,7 @@ import {
   getFirestore,
   mapReceiptNoteForClient,
   resolveReceiptNoteUser,
+  todayJstDateString,
 } from "@/lib/liff-server";
 
 export const runtime = "nodejs";
@@ -19,7 +20,7 @@ type ReceiptNoteRequestBody = {
   category?: string;
   userName?: string;
   amount?: number;
-  received?: boolean;
+  selfConfirmed?: boolean;
   source?: string;
   isActive?: boolean;
 };
@@ -36,7 +37,7 @@ function parseReceiptNoteBody(body: ReceiptNoteRequestBody) {
       source === "manual"
         ? assertPositiveAmount(body.amount)
         : assertNonNegativeAmount(body.amount),
-    received: Boolean(body.received),
+    selfConfirmed: Boolean(body.selfConfirmed),
     source,
     isActive: body.isActive !== false,
   };
@@ -47,6 +48,12 @@ export async function POST(request: NextRequest) {
     const context = await getAuthorizedContext(request);
     const body = parseReceiptNoteBody((await request.json()) as ReceiptNoteRequestBody);
     const user = resolveReceiptNoteUser(body, context);
+    const groupUserIds = context.users.map((item) => item.id);
+    // selfConfirmed 時は認証ユーザーの確認を当日 JST で記録し、received は導出する
+    const confirmations = body.selfConfirmed
+      ? { [context.user.id]: todayJstDateString() }
+      : {};
+    const received = groupUserIds.every((userId) => userId in confirmations);
     const receiptNoteRef = getFirestore().collection("receiptNotes").doc();
     const receiptNote = {
       id: receiptNoteRef.id,
@@ -56,7 +63,8 @@ export async function POST(request: NextRequest) {
       userId: user.id,
       userName: user.displayName,
       amount: body.amount,
-      received: body.received,
+      confirmations,
+      received,
       source: body.source,
       isActive: body.isActive,
       createdAt: Timestamp.now(),
@@ -68,7 +76,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       status: "ok",
       message: "Firestore に受領ノートを保存しました",
-      receiptNote: mapReceiptNoteForClient(receiptNoteRef.id, receiptNote),
+      receiptNote: mapReceiptNoteForClient(receiptNoteRef.id, receiptNote, groupUserIds),
     });
   } catch (error) {
     return NextResponse.json(
