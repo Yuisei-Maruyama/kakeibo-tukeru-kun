@@ -113,7 +113,7 @@ type ReceiptNoteCategorySummary = {
   total: number;
 };
 type ReceiptNoteDraft = {
-  category: ReceiptNoteCategory | "";
+  // 手動追加は「その他」固定なのでカテゴリーは持たず、タイトル（userName）で管理する
   userName: string;
   amount: number | "";
   // 追加先の対象月。空文字は「表示中の月に追従」を意味する
@@ -478,7 +478,6 @@ export function KakeiboLiffApp() {
     DashboardReceiptNote[]
   >([]);
   const [receiptNoteDraft, setReceiptNoteDraft] = React.useState<ReceiptNoteDraft>({
-    category: "",
     userName: "",
     amount: "",
     month: "",
@@ -1557,18 +1556,9 @@ export function KakeiboLiffApp() {
   }
 
   async function addReceiptNoteRow() {
-    const { category } = receiptNoteDraft;
-    if (!category) {
-      showError("カテゴリーを選択してください");
-      return;
-    }
-
-    const isOther = category === "other";
     const userName = receiptNoteDraft.userName.trim();
     if (!userName) {
-      showError(
-        isOther ? "タイトルを入力してください" : "ユーザーを選択してください",
-      );
+      showError("タイトルを入力してください");
       return;
     }
 
@@ -1594,7 +1584,7 @@ export function KakeiboLiffApp() {
           method: "POST",
           body: JSON.stringify({
             month: targetMonth,
-            category,
+            category: "other",
             userName,
             amount,
             source: "manual",
@@ -3085,7 +3075,7 @@ function ReceiptNotePage({
       <Card>
         <CardHeader>
           <CardTitle>明細を追加</CardTitle>
-          <CardDescription>カテゴリー・ユーザー・金額</CardDescription>
+          <CardDescription>対象月・タイトル・金額（カテゴリーは「その他」）</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="grid gap-4 sm:grid-cols-3">
@@ -3109,44 +3099,20 @@ function ReceiptNotePage({
                 ))}
               </select>
             </Field>
-            <Field label="カテゴリー" htmlFor="receipt-note-add-category">
-              <ReceiptNoteCategorySelect
-                id="receipt-note-add-category"
-                value={draft.category}
+            <Field label="タイトル" htmlFor="receipt-note-add-title">
+              <Input
+                id="receipt-note-add-title"
+                value={draft.userName}
+                placeholder="例: 立て替え分"
                 disabled={disabled}
-                onChange={(category) =>
-                  onDraftChange((current) => ({ ...current, category }))
+                onChange={(event) =>
+                  onDraftChange((current) => ({
+                    ...current,
+                    userName: event.target.value,
+                  }))
                 }
               />
             </Field>
-            {draft.category === "other" ? (
-              <Field label="タイトル" htmlFor="receipt-note-add-title">
-                <Input
-                  id="receipt-note-add-title"
-                  value={draft.userName}
-                  placeholder="例: 立て替え分"
-                  disabled={disabled}
-                  onChange={(event) =>
-                    onDraftChange((current) => ({
-                      ...current,
-                      userName: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
-            ) : (
-              <Field label="ユーザー" htmlFor="receipt-note-add-user">
-                <ReceiptNoteUserSelect
-                  id="receipt-note-add-user"
-                  users={users}
-                  value={draft.userName}
-                  disabled={disabled}
-                  onChange={(userName) =>
-                    onDraftChange((current) => ({ ...current, userName }))
-                  }
-                />
-              </Field>
-            )}
             <Field label="金額" htmlFor="receipt-note-add-amount">
               <Input
                 id="receipt-note-add-amount"
