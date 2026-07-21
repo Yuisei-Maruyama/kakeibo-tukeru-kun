@@ -276,6 +276,26 @@ function shiftYearMonth(value: string, offset: number) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+/**
+ * 受領ノート・ホームの月切替セレクターで使う対象月の選択肢を生成する。
+ * 開始月（RECEIPT_NOTE_START_MONTH）から当月まで 1 ヶ月ずつ遡った降順で並べる。
+ * @param currentSelection 現在選択中の対象月（"YYYY-MM"）。範囲外なら選択肢に補完して select が空にならないようにする
+ * @returns 降順に並んだ対象月（"YYYY-MM"）の配列
+ */
+function buildReceiptNoteMonthOptions(currentSelection: string) {
+  const months: string[] = [];
+  let cursor = todayInputValue().slice(0, 7);
+  while (cursor >= RECEIPT_NOTE_START_MONTH) {
+    months.push(cursor);
+    cursor = shiftYearMonth(cursor, -1);
+  }
+  if (currentSelection && !months.includes(currentSelection)) {
+    months.push(currentSelection);
+    months.sort((a, b) => b.localeCompare(a));
+  }
+  return months;
+}
+
 function normalizeYearMonthInput(value: string) {
   const [year, month] = value.trim().split(/[/-]/).map(Number);
   if (!year || !month || month < 1 || month > 12) {
@@ -634,13 +654,54 @@ export function KakeiboLiffApp() {
 
     return results;
   }, [expenseCategoryFilter, expenseDateFilter, expensePayerFilter, expenses]);
-  const homeMonthLabel = formatYearMonthLabel(dashboard?.month ?? dashboardMonth);
   const hasLiveDashboardData = dashboard?.source === "live" || dashboardUsers.length > 0;
   const visibleDashboardUsers =
     dashboard?.source === "live" ? dashboard.users : dashboardUsers;
   const liveDiningBalance = visibleDashboardUsers.length
     ? visibleDashboardUsers.reduce((sum, user) => sum + user.diningBalance, 0)
     : Math.max(budget - totals.dining, 0);
+  const homeMonthOptions = React.useMemo(
+    () => buildReceiptNoteMonthOptions(dashboardMonth),
+    [dashboardMonth],
+  );
+  // 外食残高カードは対象月に追従する。当月はライブ残高、過去月はその月の
+  // アクティブな外食貯金ノートを優先し、なければ「予算 − その月の外食費用合計」で算出する
+  const diningBalance = React.useMemo(() => {
+    const isCurrentMonth = dashboardMonth === todayInputValue().slice(0, 7);
+    const diningExpenseByPayer = new Map<string, number>();
+    for (const expense of expenses) {
+      if (expense.category !== "外食費用") {
+        continue;
+      }
+      diningExpenseByPayer.set(
+        expense.payer,
+        (diningExpenseByPayer.get(expense.payer) ?? 0) + expense.amount,
+      );
+    }
+    const entries = visibleDashboardUsers.map((user) => {
+      if (isCurrentMonth) {
+        return { id: user.id, displayName: user.displayName, amount: user.diningBalance };
+      }
+      const savedNote = savedReceiptNotes.find(
+        (note) =>
+          note.category === "diningSaving" &&
+          note.isActive &&
+          // 受領ノート側の照合（userId または userName 一致）と揃える
+          (note.userId === user.id || note.userName === user.displayName),
+      );
+      return {
+        id: user.id,
+        displayName: user.displayName,
+        amount: savedNote
+          ? savedNote.amount
+          : budget - (diningExpenseByPayer.get(user.displayName) ?? 0),
+      };
+    });
+    const caption = isCurrentMonth
+      ? "現在の残高"
+      : `${formatYearMonthLabel(dashboardMonth)} 時点の実績`;
+    return { entries, caption };
+  }, [budget, dashboardMonth, expenses, savedReceiptNotes, visibleDashboardUsers]);
   // 支払い者フィルターの選択肢: ダッシュボードの表示名を先頭に、履歴の payer で未収録のものを出現順で追加
   const expensePayerOptions = React.useMemo(() => {
     const options: string[] = [];
@@ -878,8 +939,8 @@ export function KakeiboLiffApp() {
     setDashboardMonth(normalizedMonth);
   }
 
-  // 受領ノートの月セレクターから対象月を切り替える（既存のダッシュボード読み込み経路に乗せる）
-  function changeReceiptNoteMonth(month: string) {
+  // ホーム・受領ノートの月セレクターから対象月を切り替える（既存のダッシュボード読み込み経路に乗せる）
+  function changeDashboardMonth(month: string) {
     if (month === dashboardMonth) {
       void loadDashboard();
       return;
@@ -1856,15 +1917,28 @@ export function KakeiboLiffApp() {
                     <p className="text-xs font-bold text-yadon">
                       対象月
                     </p>
-                    <h2 className="truncate text-xl font-black tracking-normal">
-                      {homeMonthLabel}
-                    </h2>
+                    <select
+                      aria-label="ホームの対象月"
+                      value={dashboardMonth}
+                      disabled={isLoadingDashboard}
+                      onChange={(event) => changeDashboardMonth(event.target.value)}
+                      className="chalk-select mt-1 h-11 min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-1 text-xl font-black tracking-normal shadow-sm"
+                    >
+                      {homeMonthOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {formatYearMonthLabel(option)}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <Badge variant={hasLiveDashboardData ? "default" : "outline"}>
                     {hasLiveDashboardData ? "実データ" : "プレビュー"}
                   </Badge>
                 </div>
-                <DiningBalanceCard users={visibleDashboardUsers} />
+                <DiningBalanceCard
+                  entries={diningBalance.entries}
+                  caption={diningBalance.caption}
+                />
                 <MetricCard
                   label="買い物合計"
                   value={formatCurrency(totals.shopping)}
@@ -2656,7 +2730,7 @@ export function KakeiboLiffApp() {
               isLoading={isLoadingDashboard}
               draft={receiptNoteDraft}
               disabled={isMutating}
-              onMonthChange={changeReceiptNoteMonth}
+              onMonthChange={changeDashboardMonth}
               onFilterChange={setReceiptNoteFilter}
               onDraftChange={setReceiptNoteDraft}
               onAddRow={addReceiptNoteRow}
@@ -2825,21 +2899,10 @@ function ReceiptNotePage({
   ) => Promise<boolean>;
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
-  // 開始月から当月まで 1 ヶ月ずつ遡った降順の選択肢
-  const monthOptions = React.useMemo(() => {
-    const months: string[] = [];
-    let cursor = todayInputValue().slice(0, 7);
-    while (cursor >= RECEIPT_NOTE_START_MONTH) {
-      months.push(cursor);
-      cursor = shiftYearMonth(cursor, -1);
-    }
-    // ホーム側の月指定で範囲外の月が表示中でも select が空にならないようにする
-    if (month && !months.includes(month)) {
-      months.push(month);
-      months.sort((a, b) => b.localeCompare(a));
-    }
-    return months;
-  }, [month]);
+  const monthOptions = React.useMemo(
+    () => buildReceiptNoteMonthOptions(month),
+    [month],
+  );
   const groupUserIds = groupUsers.map((user) => user.id);
   const selfConfirmedOf = (row: ReceiptNoteRow) =>
     currentUser != null && row.confirmations[currentUser.id] != null;
@@ -3691,8 +3754,14 @@ function MetricCard({
   );
 }
 
-function DiningBalanceCard({ users }: { users: DashboardData["users"] }) {
-  const totalBalance = users.reduce((sum, user) => sum + user.diningBalance, 0);
+function DiningBalanceCard({
+  entries,
+  caption,
+}: {
+  entries: { id: string; displayName: string; amount: number }[];
+  caption: string;
+}) {
+  const totalBalance = entries.reduce((sum, entry) => sum + entry.amount, 0);
 
   return (
     <Card>
@@ -3703,24 +3772,39 @@ function DiningBalanceCard({ users }: { users: DashboardData["users"] }) {
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-muted-foreground">外食残高</p>
-            <p className="text-glow truncate text-2xl font-black tracking-normal">
-              {users.length ? formatCurrency(totalBalance) : "未取得"}
+            <p
+              className={cn(
+                "text-glow truncate text-2xl font-black tracking-normal",
+                entries.length && totalBalance < 0 && "text-destructive",
+              )}
+            >
+              {entries.length ? formatCurrency(totalBalance) : "未取得"}
             </p>
+            {entries.length ? (
+              <p className="truncate text-xs font-semibold text-muted-foreground">
+                {caption}
+              </p>
+            ) : null}
           </div>
         </div>
         <div className="grid gap-2">
-          {users.length ? (
-            users.map((user) => (
+          {entries.length ? (
+            entries.map((entry) => (
               <div
-                key={user.id}
+                key={entry.id}
                 className="flex min-w-0 items-center justify-between gap-3 rounded-md border bg-background/70 px-3 py-2"
               >
                 <div className="flex min-w-0 items-center gap-2">
                   <UserRound className="size-4 shrink-0 text-primary" aria-hidden="true" />
-                  <span className="min-w-0 truncate font-semibold">{user.displayName}</span>
+                  <span className="min-w-0 truncate font-semibold">{entry.displayName}</span>
                 </div>
-                <span className="text-glow shrink-0 font-black tabular-nums">
-                  {formatCurrency(user.diningBalance)}
+                <span
+                  className={cn(
+                    "text-glow shrink-0 font-black tabular-nums",
+                    entry.amount < 0 && "text-destructive",
+                  )}
+                >
+                  {formatCurrency(entry.amount)}
                 </span>
               </div>
             ))
