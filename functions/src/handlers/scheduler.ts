@@ -714,9 +714,10 @@ export async function handleMonthlySubscriptions(req: Request, res: Response): P
       return;
     }
 
-    // 対象月の範囲を計算
-    const monthStart = new Date(year, month - 1, 1);
-    const monthEnd = new Date(year, month, 0); // 月末日
+    // 対象月の範囲を計算（calculateDeliveryDatesForMonth が UTC 基準で比較するため、
+    // TZ=Asia/Tokyo 環境でローカル解釈されると月末日が 1 日ずれて月末払いが漏れる。UTC で生成する）
+    const monthStart = new Date(Date.UTC(year, month - 1, 1));
+    const monthEnd = new Date(Date.UTC(year, month, 0)); // 月末日
 
     let registeredCount = 0;
     let errorCount = 0;
