@@ -816,8 +816,34 @@ export function KakeiboLiffApp() {
     const isCurrentMonth = dashboardMonth === todayInputValue().slice(0, 7);
 
     for (const category of receiptNoteCategories) {
-      // その他など支出カテゴリーに紐付かないものは自動集計行を作らない
+      // その他カテゴリーは家賃の自動行だけを導出する（明細追加の手動行は保存済みノート側で表現される）
       if (!category.expenseCategory) {
+        if (category.value !== "other" || !rent || rent.amount <= 0) {
+          continue;
+        }
+        // 実体化済み・削除済み（source: summary のノートが存在する月）は再導出しない
+        if (summaryNoteCategories.has(category.value)) {
+          continue;
+        }
+        const key = createReceiptNoteKey(dashboardMonth, category.value, "家賃代");
+        if (receiptNoteDeletedKeys[key]) {
+          continue;
+        }
+        rows.push({
+          key,
+          category: category.value,
+          user: {
+            id: "rent",
+            name: receiptNoteUserNames[key] ?? "家賃代",
+          },
+          amount: receiptNoteAmounts[key] ?? rent.amount,
+          confirmations: mergeRowConfirmations(
+            {},
+            receiptNoteConfirmOverrides[key],
+            currentUser?.id,
+          ),
+          isManual: false,
+        });
         continue;
       }
 
@@ -936,6 +962,7 @@ export function KakeiboLiffApp() {
     receiptNoteDeletedKeys,
     receiptNoteUserNames,
     receiptNoteUsers,
+    rent,
     savedReceiptNotes,
     visibleDashboardUsers,
   ]);
