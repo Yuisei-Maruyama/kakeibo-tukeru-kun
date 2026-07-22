@@ -468,9 +468,6 @@ export function KakeiboLiffApp() {
   const [receiptNoteUserNames, setReceiptNoteUserNames] = React.useState<
     Record<string, string>
   >({});
-  const [receiptNoteRowCategories, setReceiptNoteRowCategories] = React.useState<
-    Record<string, ReceiptNoteCategory>
-  >({});
   const [receiptNoteDeletedKeys, setReceiptNoteDeletedKeys] = React.useState<
     Record<string, boolean>
   >({});
@@ -860,7 +857,7 @@ export function KakeiboLiffApp() {
 
         rows.push({
           key,
-          category: receiptNoteRowCategories[key] ?? category.value,
+          category: category.value,
           user: {
             id: payer.id,
             name: receiptNoteUserNames[key] ?? payer.name,
@@ -902,7 +899,7 @@ export function KakeiboLiffApp() {
 
         rows.push({
           key,
-          category: receiptNoteRowCategories[key] ?? category.value,
+          category: category.value,
           user: {
             id: user.id,
             name: userName,
@@ -937,7 +934,6 @@ export function KakeiboLiffApp() {
     receiptNoteAmounts,
     receiptNoteConfirmOverrides,
     receiptNoteDeletedKeys,
-    receiptNoteRowCategories,
     receiptNoteUserNames,
     receiptNoteUsers,
     savedReceiptNotes,
@@ -1524,14 +1520,14 @@ export function KakeiboLiffApp() {
 
   async function saveReceiptNoteRow(
     row: ReceiptNoteRow,
-    patch: Partial<Pick<ReceiptNoteRow, "category" | "amount">> & {
+    patch: Partial<Pick<ReceiptNoteRow, "amount">> & {
       userName?: string;
       isActive?: boolean;
     } = {},
   ) {
     const payload = {
       month: dashboardMonth,
-      category: patch.category ?? row.category,
+      category: row.category,
       userName: patch.userName ?? row.user.name,
       amount: patch.amount ?? row.amount,
       source: row.isManual ? "manual" : "summary",
@@ -1595,11 +1591,7 @@ export function KakeiboLiffApp() {
       applySavedReceiptNote(result.receiptNote);
       // 追加した明細は未確認なので未確認タブへ切り替えて可視化する
       setReceiptNoteFilter("unconfirmed");
-      setReceiptNoteDraft((current) => ({
-        ...current,
-        amount: "",
-        month: "",
-      }));
+      setReceiptNoteDraft({ userName: "", amount: "", month: "" });
       setToast(result.message);
       celebrateSave();
       // 別の月へ追加したときは、その月へ表示を切り替えて追加分を見えるようにする
@@ -1613,14 +1605,14 @@ export function KakeiboLiffApp() {
     }
   }
 
-  // モーダルからカテゴリー・ユーザー/タイトル・設定額をまとめて更新する
+  // モーダルからユーザー/タイトル・設定額をまとめて更新する（カテゴリーは変更不可）
   async function updateReceiptNoteRowDetails(
     row: ReceiptNoteRow,
-    patch: { category: ReceiptNoteCategory; userName: string; amount: number },
+    patch: { userName: string; amount: number },
   ) {
     const userName = patch.userName.trim();
-    // カテゴリーが「その他」ならタイトル、それ以外はユーザーを必須にする
-    if (patch.category === "other") {
+    // その他行はタイトル、それ以外の行はユーザーを必須にする（カテゴリーは変更不可）
+    if (row.category === "other") {
       if (!userName) {
         showError("タイトルを入力してください");
         return false;
@@ -1643,24 +1635,15 @@ export function KakeiboLiffApp() {
     }
 
     // 変更のあったフィールドだけを差分にまとめ、全一致なら何もしない
-    const nextCategory =
-      patch.category !== row.category ? patch.category : undefined;
     const nextUserName = userName !== row.user.name ? userName : undefined;
     const nextAmount = patch.amount !== row.amount ? patch.amount : undefined;
-    if (
-      nextCategory === undefined &&
-      nextUserName === undefined &&
-      nextAmount === undefined
-    ) {
+    if (nextUserName === undefined && nextAmount === undefined) {
       return true;
     }
 
-    const diff: Partial<Pick<ReceiptNoteRow, "category" | "amount">> & {
+    const diff: Partial<Pick<ReceiptNoteRow, "amount">> & {
       userName?: string;
     } = {};
-    if (nextCategory !== undefined) {
-      diff.category = nextCategory;
-    }
     if (nextUserName !== undefined) {
       diff.userName = nextUserName;
     }
@@ -1669,15 +1652,8 @@ export function KakeiboLiffApp() {
     }
 
     // 楽観更新: 変更フィールドの override を更新（巻き戻し用に変更前値を保持）
-    const previousCategory = receiptNoteRowCategories[row.key];
     const previousUserName = receiptNoteUserNames[row.key];
     const previousAmount = receiptNoteAmounts[row.key];
-    if (nextCategory !== undefined) {
-      setReceiptNoteRowCategories((current) => ({
-        ...current,
-        [row.key]: nextCategory,
-      }));
-    }
     if (nextUserName !== undefined) {
       setReceiptNoteUserNames((current) => ({
         ...current,
@@ -1703,11 +1679,6 @@ export function KakeiboLiffApp() {
       return true;
     } catch (error) {
       // 触った override をすべて巻き戻す
-      if (nextCategory !== undefined) {
-        setReceiptNoteRowCategories((current) =>
-          restoreRecordKey(current, row.key, previousCategory),
-        );
-      }
       if (nextUserName !== undefined) {
         setReceiptNoteUserNames((current) =>
           restoreRecordKey(current, row.key, previousUserName),
@@ -1792,7 +1763,6 @@ export function KakeiboLiffApp() {
     setReceiptNoteAmounts((current) => omitRecordKey(current, key));
     setReceiptNoteConfirmOverrides((current) => omitRecordKey(current, key));
     setReceiptNoteUserNames((current) => omitRecordKey(current, key));
-    setReceiptNoteRowCategories((current) => omitRecordKey(current, key));
   }
 
   async function deleteReceiptNoteRow(row: ReceiptNoteRow) {
@@ -2968,7 +2938,7 @@ function ReceiptNotePage({
   onConfirmChange: (row: ReceiptNoteRow, confirmed: boolean) => void;
   onUpdateRow: (
     row: ReceiptNoteRow,
-    patch: { category: ReceiptNoteCategory; userName: string; amount: number },
+    patch: { userName: string; amount: number },
   ) => Promise<boolean>;
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
@@ -3199,37 +3169,6 @@ function ReceiptNotePage({
   );
 }
 
-function ReceiptNoteCategorySelect({
-  id,
-  value,
-  disabled = false,
-  onChange,
-}: {
-  id: string;
-  value: ReceiptNoteCategory | "";
-  disabled?: boolean;
-  onChange: (value: ReceiptNoteCategory) => void;
-}) {
-  return (
-    <select
-      id={id}
-      value={value}
-      disabled={disabled}
-      onChange={(event) => onChange(event.target.value as ReceiptNoteCategory)}
-      className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
-    >
-      <option value="" disabled>
-        選択してください
-      </option>
-      {receiptNoteCategories.map((category) => (
-        <option key={category.value} value={category.value}>
-          {category.label}
-        </option>
-      ))}
-    </select>
-  );
-}
-
 function ReceiptNoteUserSelect({
   id,
   name,
@@ -3298,7 +3237,7 @@ function ReceiptNoteCategoryCard({
   onConfirmChange: (row: ReceiptNoteRow, confirmed: boolean) => void;
   onUpdateRow: (
     row: ReceiptNoteRow,
-    patch: { category: ReceiptNoteCategory; userName: string; amount: number },
+    patch: { userName: string; amount: number },
   ) => Promise<boolean>;
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
@@ -3369,26 +3308,24 @@ function ReceiptNoteRowItem({
   onConfirmChange: (row: ReceiptNoteRow, confirmed: boolean) => void;
   onUpdateRow: (
     row: ReceiptNoteRow,
-    patch: { category: ReceiptNoteCategory; userName: string; amount: number },
+    patch: { userName: string; amount: number },
   ) => Promise<boolean>;
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
   const [editOpen, setEditOpen] = React.useState(false);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [draft, setDraft] = React.useState<{
-    category: ReceiptNoteCategory;
     userName: string;
     amount: number | "";
-  }>({ category: row.category, userName: row.user.name, amount: row.amount });
+  }>({ userName: row.user.name, amount: row.amount });
 
   // 行の内容が変わったら編集ドラフトを同期する
   React.useEffect(() => {
     setDraft({
-      category: row.category,
       userName: row.user.name,
       amount: row.amount,
     });
-  }, [row.category, row.user.name, row.amount]);
+  }, [row.user.name, row.amount]);
 
   const selfConfirmed =
     currentUser != null && row.confirmations[currentUser.id] != null;
@@ -3396,6 +3333,10 @@ function ReceiptNoteRowItem({
     groupUsers.length > 0 &&
     groupUsers.every((user) => row.confirmations[user.id] != null);
   const isDiningSaving = row.category === "diningSaving";
+  // カテゴリーは作成後変更不可なので、編集モーダルでは表示のみに使う
+  const categoryLabel =
+    receiptNoteCategories.find((category) => category.value === row.category)
+      ?.label ?? row.category;
   // 外食貯金の自動行・自動由来の保存行は削除しても自動行が復活するため削除ボタンを隠す
   const canDelete = !(isDiningSaving && !row.isManual);
   const isSettlement =
@@ -3440,10 +3381,9 @@ function ReceiptNoteRowItem({
             }
           }}
         />
-        <span className="min-w-0 flex-1 truncate font-semibold">
+        <span className="min-w-0 flex-1 break-words font-semibold">
           {row.user.name}
         </span>
-        {row.isManual ? <Badge variant="outline">追加</Badge> : null}
         <span
           className={cn(
             "shrink-0 font-bold tabular-nums",
@@ -3459,7 +3399,6 @@ function ReceiptNoteRowItem({
             // 開くたびに行の現在値からドラフトを作り直す（前回の編集途中の値を残さない）
             if (open) {
               setDraft({
-                category: row.category,
                 userName: row.user.name,
                 amount: row.amount,
               });
@@ -3480,23 +3419,12 @@ function ReceiptNoteRowItem({
           <DialogContent>
             <DialogHeader>
               <DialogTitle>明細を編集</DialogTitle>
-              <DialogDescription>{row.user.name}</DialogDescription>
+              <DialogDescription>
+                {categoryLabel}・{row.user.name}
+              </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4">
-              <Field
-                label="カテゴリー"
-                htmlFor={`${summaryValue}-${index}-receipt-category`}
-              >
-                <ReceiptNoteCategorySelect
-                  id={`${summaryValue}-${index}-receipt-category`}
-                  value={draft.category}
-                  disabled={disabled}
-                  onChange={(category) =>
-                    setDraft((current) => ({ ...current, category }))
-                  }
-                />
-              </Field>
-              {draft.category === "other" ? (
+              {row.category === "other" ? (
                 <Field
                   label="タイトル"
                   htmlFor={`${summaryValue}-${index}-receipt-title`}
@@ -3572,7 +3500,6 @@ function ReceiptNoteRowItem({
                 onClick={() =>
                   // バリデーションや保存に失敗したときは閉じずに入力を保持する
                   void onUpdateRow(row, {
-                    category: draft.category,
                     userName: draft.userName,
                     amount: Number(draft.amount),
                   }).then((saved) => {
