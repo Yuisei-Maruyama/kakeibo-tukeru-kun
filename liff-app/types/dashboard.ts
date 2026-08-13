@@ -60,6 +60,8 @@ export type DashboardReceiptNote = {
   userId: string;
   userName: string;
   amount: number;
+  // ノート記載日。未実体化の自動行には無い
+  createdAt?: string;
   // 互換ミラー: グループ全員が confirmations に存在すれば true
   received: boolean;
   // userId → 確認日（"YYYY-MM-DD"）。旧データ互換は "legacy"

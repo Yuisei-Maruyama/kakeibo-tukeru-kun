@@ -216,6 +216,34 @@ export function formatTimestampDate(value: unknown) {
   return "";
 }
 
+/**
+ * Firestore Timestamp または Date を JST の "YYYY-MM-DD" 形式へ変換する。
+ * @param value 変換対象の値
+ * @returns JST 基準の日付文字列。対象外の値は undefined
+ */
+export function timestampToJstDateString(value: unknown): string | undefined {
+  const date = value instanceof Timestamp ? value.toDate() : value;
+  if (!(date instanceof Date)) {
+    return undefined;
+  }
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  return `${year}-${month}-${day}`;
+}
+
 export function isCurrentJSTMonth(date: string) {
   const parts = new Intl.DateTimeFormat("ja-JP", {
     timeZone: "Asia/Tokyo",
@@ -234,18 +262,7 @@ export function isCurrentJSTMonth(date: string) {
  * @returns JST 基準の当日日付文字列
  */
 export function todayJstDateString() {
-  const parts = new Intl.DateTimeFormat("ja-JP", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-
-  const year = parts.find((part) => part.type === "year")?.value;
-  const month = parts.find((part) => part.type === "month")?.value;
-  const day = parts.find((part) => part.type === "day")?.value;
-
-  return `${year}-${month}-${day}`;
+  return timestampToJstDateString(new Date()) ?? "";
 }
 
 export function buildIntervalLabel(unit: string, value: number) {
@@ -979,6 +996,7 @@ export function mapReceiptNoteForClient(
     userId: String(receiptNote.userId ?? ""),
     userName: String(receiptNote.userName ?? ""),
     amount: Number(receiptNote.amount ?? 0),
+    createdAt: timestampToJstDateString(receiptNote.createdAt),
     received: Boolean(receiptNote.received),
     confirmations: normalizeReceiptNoteConfirmations(receiptNote, groupUserIds),
     source: receiptNote.source === "summary" ? "summary" : "manual",

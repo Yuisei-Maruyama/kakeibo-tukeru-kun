@@ -101,6 +101,7 @@ type ReceiptNoteRow = {
   category: ReceiptNoteCategory;
   user: ReceiptNoteUser;
   amount: number;
+  createdAt?: string;
   // userId → 確認日（"YYYY-MM-DD"）または旧データ互換の "legacy"
   confirmations: Record<string, string>;
   isManual: boolean;
@@ -312,7 +313,7 @@ function toReportMonthInput(value: string) {
   return `${year}/${month}`;
 }
 
-// 確認日（"YYYY-MM-DD"）を M/D 形式（先頭ゼロなし）で表示する
+// 確認日・記載日（"YYYY-MM-DD"）を M/D 形式（先頭ゼロなし）で表示する
 function formatConfirmationDate(date: string) {
   const [, month, day] = date.split("-");
   if (!month || !day) {
@@ -432,6 +433,7 @@ export function KakeiboLiffApp() {
   const [expenses, setExpenses] = React.useState<Expense[]>(initialExpenses);
   const [dashboardUsers, setDashboardUsers] = React.useState<DashboardData["users"]>([]);
   const [draftExpense, setDraftExpense] = React.useState<DraftExpense>(defaultDraft);
+  const [expenseFormError, setExpenseFormError] = React.useState<string | null>(null);
   const [receiptImageUrl, setReceiptImageUrl] = React.useState<string | null>(null);
   const [receiptFile, setReceiptFile] = React.useState<File | null>(null);
   const [isAnalyzingImage, setIsAnalyzingImage] = React.useState(false);
@@ -511,6 +513,11 @@ export function KakeiboLiffApp() {
       setErrorToast(null);
     }, 4000);
   }, []);
+
+  // 追加・画像・他タブの切替で古い検証エラーを持ち越さない
+  React.useEffect(() => {
+    setExpenseFormError(null);
+  }, [addMode, activeTab]);
 
   React.useEffect(() => {
     return () => {
@@ -794,6 +801,7 @@ export function KakeiboLiffApp() {
           name: receiptNoteUserNames[receiptNote.id] ?? receiptNote.userName,
         },
         amount: receiptNoteAmounts[receiptNote.id] ?? receiptNote.amount,
+        createdAt: receiptNote.createdAt,
         confirmations: mergeRowConfirmations(
           receiptNote.confirmations ?? {},
           receiptNoteConfirmOverrides[receiptNote.id],
@@ -1107,13 +1115,17 @@ export function KakeiboLiffApp() {
   }
 
   async function submitExpense() {
-    if (!draftExpense.date || !draftExpense.storeName.trim()) {
-      showError("日付と内容を入力してください");
+    if (!draftExpense.date) {
+      const message = "日付を入力してください";
+      showError(message);
+      setExpenseFormError(message);
       return;
     }
 
     if (!draftExpense.category) {
-      showError("カテゴリーを選択してください");
+      const message = "カテゴリーを選択してください";
+      showError(message);
+      setExpenseFormError(message);
       return;
     }
 
@@ -1123,7 +1135,9 @@ export function KakeiboLiffApp() {
       !Number.isFinite(expenseAmount) ||
       expenseAmount <= 0
     ) {
-      showError("金額は 1 円以上で入力してください");
+      const message = "金額は 1 円以上で入力してください";
+      showError(message);
+      setExpenseFormError(message);
       return;
     }
 
@@ -1148,13 +1162,16 @@ export function KakeiboLiffApp() {
         setDashboardUsers(result.users);
         setDashboard(null);
         setDraftExpense(defaultDraft());
+        setExpenseFormError(null);
         setReportMode("history");
         setActiveTab("history");
         setToast(result.message);
         celebrateSave();
       });
     } catch (error) {
-      showError(error instanceof Error ? error.message : "支出の保存に失敗しました");
+      const message = error instanceof Error ? error.message : "支出の保存に失敗しました";
+      showError(message);
+      setExpenseFormError(message);
     } finally {
       setIsMutating(false);
     }
@@ -1185,8 +1202,8 @@ export function KakeiboLiffApp() {
   }
 
   async function updateExpense(before: Expense, after: Expense) {
-    if (!after.date || !after.storeName.trim()) {
-      showError("日付と内容を入力してください");
+    if (!after.date) {
+      showError("日付を入力してください");
       return;
     }
 
@@ -2209,7 +2226,11 @@ export function KakeiboLiffApp() {
                 <ExpenseForm
                   draft={draftExpense}
                   disabled={isMutating}
-                  onChange={setDraftExpense}
+                  errorMessage={expenseFormError}
+                  onChange={(action) => {
+                    setExpenseFormError(null);
+                    setDraftExpense(action);
+                  }}
                   onSubmit={() => void submitExpense()}
                 />
               )}
@@ -3543,6 +3564,11 @@ function ReceiptNoteRowItem({
           </DialogContent>
         </Dialog>
       </div>
+      {row.createdAt ? (
+        <p className="pl-8 text-xs text-muted-foreground">
+          記載日: {formatConfirmationDate(row.createdAt)}
+        </p>
+      ) : null}
       {/* 確認状態（グループ各メンバーの確認状況を常時表示） */}
       {groupUsers.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5 pl-8">
@@ -4011,11 +4037,13 @@ function CategorySelect({
 function ExpenseForm({
   draft,
   disabled,
+  errorMessage,
   onChange,
   onSubmit,
 }: {
   draft: DraftExpense;
   disabled: boolean;
+  errorMessage?: string | null;
   onChange: React.Dispatch<React.SetStateAction<DraftExpense>>;
   onSubmit: () => void;
 }) {
@@ -4079,9 +4107,10 @@ function ExpenseForm({
             />
           </Field>
         </div>
-        <Field label="内容" htmlFor="content">
+        <Field label="内容（任意）" htmlFor="content">
           <Input
             id="content"
+            placeholder="未入力なら「手動入力」"
             value={draft.storeName}
             onChange={(event) =>
               onChange((current) => ({ ...current, storeName: event.target.value }))
@@ -4097,6 +4126,12 @@ function ExpenseForm({
             }
           />
         </Field>
+        {errorMessage ? (
+          <p className="flex items-center gap-2 text-sm font-bold text-destructive">
+            <XCircle className="size-4 shrink-0" aria-hidden="true" />
+            {errorMessage}
+          </p>
+        ) : null}
         <Button type="button" disabled={disabled} onClick={onSubmit}>
           <ButtonIcon busy={disabled} icon={Send} />
           登録
@@ -4343,9 +4378,10 @@ function ExpenseRow({
                   }
                 />
               </Field>
-              <Field label="内容" htmlFor={`${expense.id}-content`}>
+              <Field label="内容（任意）" htmlFor={`${expense.id}-content`}>
                 <Input
                   id={`${expense.id}-content`}
+                  placeholder="未入力なら「手動入力」"
                   value={draft.storeName}
                   onChange={(event) =>
                     setDraft((current) => ({

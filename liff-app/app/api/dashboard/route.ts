@@ -2,7 +2,10 @@ import { Firestore, Timestamp } from "@google-cloud/firestore";
 import { google, type calendar_v3 } from "googleapis";
 import { NextRequest, NextResponse } from "next/server";
 import { createFirestoreClient, createGoogleAuth } from "@/lib/google-server";
-import { normalizeReceiptNoteConfirmations } from "@/lib/liff-server";
+import {
+  normalizeReceiptNoteConfirmations,
+  timestampToJstDateString,
+} from "@/lib/liff-server";
 import type {
   DashboardCalendarEvent,
   DashboardData,
@@ -442,6 +445,7 @@ async function getReceiptNotes(
       userId: String(receiptNote.userId ?? ""),
       userName: String(receiptNote.userName ?? ""),
       amount: Number(receiptNote.amount ?? 0),
+      createdAt: timestampToJstDateString(receiptNote.createdAt),
       received: Boolean(receiptNote.received),
       confirmations: normalizeReceiptNoteConfirmations(receiptNote, groupUserIds),
       source:
