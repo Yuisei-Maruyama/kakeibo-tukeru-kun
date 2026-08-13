@@ -400,7 +400,7 @@ export interface ParsedExpenseEvent {
   category: '外食費用' | '買い物費用' | '旅行費用';
   userName: string;
   amount: number;
-  storeName: string;
+  storeName?: string; // undefinedの場合はイベントに店舗情報なし
   eventId: string;
   date: string; // YYYY-MM-DD
 }
@@ -435,7 +435,7 @@ export function parseExpenseEventTitle(
     let category: '外食費用' | '買い物費用' | '旅行費用' | null = null;
     let userName = '';
     let amount = 0;
-    let storeName = '手動追加';
+    let storeName: string | undefined;
 
     // カテゴリーを抽出（柔軟な部分一致）
     // 外食費用: 外食、外食費を含む
@@ -480,9 +480,21 @@ export function parseExpenseEventTitle(
     // 先に店舗名を抽出・除去（金額との競合を避けるため）
     const storeMatch = afterCategory.match(/\(([^)]+)\)/);
     if (storeMatch) {
-      storeName = storeMatch[1].trim();
       // 店舗名を除去
       afterCategory = afterCategory.replace(/\([^)]+\)/, '').trim();
+    }
+
+    const titleStoreName = storeMatch?.[1].trim();
+    if (titleStoreName) {
+      storeName = titleStoreName;
+    } else {
+      // Bot/LIFF形式のイベントは説明欄の店舗情報をフォールバックとして使用
+      // \s は改行も跨ぐため行内空白のみ許容。HTML化された説明欄では最初の < までを採用
+      const descriptionStoreMatch = event.description?.match(/^店舗:[ \t]*(.+)$/m);
+      const descriptionStoreName = descriptionStoreMatch?.[1].split('<')[0].trim();
+      if (descriptionStoreName) {
+        storeName = descriptionStoreName;
+      }
     }
 
     // 金額を抽出（¥付き・円付き・記号なしのすべてに対応）

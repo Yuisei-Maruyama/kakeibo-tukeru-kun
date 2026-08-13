@@ -501,11 +501,12 @@ async function syncExistingExpense(
   event: ParsedExpenseEvent
 ): Promise<'updated' | 'skipped' | 'error'> {
   const existingDate = getStoredExpenseDateString(existingExpense);
+  const shouldUpdateStoreName = event.storeName !== undefined;
   const hasChanges =
     existingExpense.amount !== event.amount ||
     existingExpense.userName !== event.userName ||
     existingExpense.category !== event.category ||
-    existingExpense.storeName !== event.storeName ||
+    (shouldUpdateStoreName && existingExpense.storeName !== event.storeName) ||
     existingDate !== event.date;
 
   if (!hasChanges) {
@@ -534,7 +535,8 @@ async function syncExistingExpense(
     userName: event.userName,
     amount: event.amount,
     category: event.category,
-    storeName: event.storeName,
+    // イベントに店舗情報がない場合は既存のstoreNameを保持
+    ...(shouldUpdateStoreName ? { storeName: event.storeName } : {}),
     date: Timestamp.fromDate(new Date(event.date)),
   });
 
@@ -601,7 +603,7 @@ async function syncCalendarExpensesForMonth(
         userName: event.userName,
         amount: event.amount,
         category: event.category,
-        storeName: event.storeName,
+        storeName: event.storeName ?? '手動追加',
         date: Timestamp.fromDate(new Date(event.date)),
         calendarEventId: event.eventId,
       });
