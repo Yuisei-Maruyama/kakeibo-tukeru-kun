@@ -481,6 +481,9 @@ export function KakeiboLiffApp() {
     amount: "",
     month: "",
   });
+  const [receiptNoteFormError, setReceiptNoteFormError] = React.useState<
+    string | null
+  >(null);
   // ログイン中ユーザー（null = プレビュー / 認証スキップ。確認操作は不可）
   const [currentUser, setCurrentUser] =
     React.useState<DashboardData["currentUser"]>(null);
@@ -1595,11 +1598,13 @@ export function KakeiboLiffApp() {
     return result.receiptNote;
   }
 
-  async function addReceiptNoteRow() {
+  async function addReceiptNoteRow(): Promise<boolean> {
     const userName = receiptNoteDraft.userName.trim();
     if (!userName) {
-      showError("タイトルを入力してください");
-      return;
+      const message = "タイトルを入力してください";
+      showError(message);
+      setReceiptNoteFormError(message);
+      return false;
     }
 
     const amount = Number(receiptNoteDraft.amount);
@@ -1608,8 +1613,10 @@ export function KakeiboLiffApp() {
       !Number.isFinite(amount) ||
       amount <= 0
     ) {
-      showError("金額は 1 円以上で入力してください");
-      return;
+      const message = "金額は 1 円以上で入力してください";
+      showError(message);
+      setReceiptNoteFormError(message);
+      return false;
     }
 
     // 空文字は「表示中の月に追従」を意味するので、未選択なら表示中の月に追加する
@@ -1617,8 +1624,9 @@ export function KakeiboLiffApp() {
 
     setIsMutating(true);
 
+    let result: ApiResponse<ReceiptNoteMutationResult>;
     try {
-      const result = await requestJson<ReceiptNoteMutationResult>(
+      result = await requestJson<ReceiptNoteMutationResult>(
         "/api/receipt-notes",
         {
           method: "POST",
@@ -1633,20 +1641,28 @@ export function KakeiboLiffApp() {
       );
 
       applySavedReceiptNote(result.receiptNote);
-      // 追加した明細は未確認なので未確認タブへ切り替えて可視化する
-      setReceiptNoteFilter("unconfirmed");
-      setReceiptNoteDraft({ userName: "", amount: "", month: "" });
-      setToast(result.message);
-      celebrateSave();
-      // 別の月へ追加したときは、その月へ表示を切り替えて追加分を見えるようにする
-      if (targetMonth !== dashboardMonth) {
-        changeDashboardMonth(targetMonth);
-      }
     } catch (error) {
-      showError(error instanceof Error ? error.message : "受領ノートの保存に失敗しました");
+      const message =
+        error instanceof Error ? error.message : "受領ノートの保存に失敗しました";
+      showError(message);
+      setReceiptNoteFormError(message);
+      return false;
     } finally {
       setIsMutating(false);
     }
+
+    // POST 成功後の副作用の例外を false 扱いにせず、再送信（二重登録）を誘発しないため、ここで実行する
+    // 追加した明細は未確認なので未確認タブへ切り替えて可視化する
+    setReceiptNoteFilter("unconfirmed");
+    setReceiptNoteDraft({ userName: "", amount: "", month: "" });
+    setReceiptNoteFormError(null);
+    setToast(result.message);
+    celebrateSave();
+    // 別の月へ追加したときは、その月へ表示を切り替えて追加分を見えるようにする
+    if (targetMonth !== dashboardMonth) {
+      changeDashboardMonth(targetMonth);
+    }
+    return true;
   }
 
   // モーダルからユーザー/タイトル・設定額をまとめて更新する（カテゴリーは変更不可）
@@ -2821,9 +2837,13 @@ export function KakeiboLiffApp() {
               isLoading={isLoadingDashboard}
               draft={receiptNoteDraft}
               disabled={isMutating}
+              formError={receiptNoteFormError}
               onMonthChange={changeDashboardMonth}
               onFilterChange={setReceiptNoteFilter}
-              onDraftChange={setReceiptNoteDraft}
+              onDraftChange={(action) => {
+                setReceiptNoteFormError(null);
+                setReceiptNoteDraft(action);
+              }}
               onAddRow={addReceiptNoteRow}
               onConfirmChange={updateReceiptNoteConfirm}
               onUpdateRow={updateReceiptNoteRowDetails}
@@ -2962,6 +2982,7 @@ function ReceiptNotePage({
   isLoading,
   draft,
   disabled,
+  formError,
   onMonthChange,
   onFilterChange,
   onDraftChange,
@@ -2979,10 +3000,11 @@ function ReceiptNotePage({
   isLoading: boolean;
   draft: ReceiptNoteDraft;
   disabled: boolean;
+  formError?: string | null;
   onMonthChange: (value: string) => void;
   onFilterChange: (value: ReceiptNoteFilter) => void;
   onDraftChange: React.Dispatch<React.SetStateAction<ReceiptNoteDraft>>;
-  onAddRow: () => void;
+  onAddRow: () => Promise<boolean>;
   onConfirmChange: (row: ReceiptNoteRow, confirmed: boolean) => void;
   onUpdateRow: (
     row: ReceiptNoteRow,
@@ -2990,6 +3012,7 @@ function ReceiptNotePage({
   ) => Promise<boolean>;
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
+  const [addOpen, setAddOpen] = React.useState(false);
   const monthOptions = React.useMemo(
     () => buildReceiptNoteMonthOptions(month),
     [month],
@@ -3090,12 +3113,32 @@ function ReceiptNotePage({
         </div>
       </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>明細を追加</CardTitle>
-          <CardDescription>対象月・タイトル・金額（カテゴリーは「その他」）</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4">
+      <Dialog
+        open={addOpen}
+        onOpenChange={(open) => {
+          // 送信中に閉じると完了時の .then が別インスタンスのモーダルを誤って閉じるため、dismiss を無効化する
+          if (!open && disabled) {
+            return;
+          }
+          setAddOpen(open);
+          if (open) {
+            onDraftChange({ userName: "", amount: "", month: "" });
+          }
+        }}
+      >
+        <DialogTrigger asChild>
+          <Button type="button" variant="outline" className="w-full">
+            <Plus aria-hidden="true" />
+            明細を追加
+          </Button>
+        </DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>明細を追加</DialogTitle>
+            <DialogDescription>
+              対象月・タイトル・金額を入力。カテゴリーは「その他」
+            </DialogDescription>
+          </DialogHeader>
           <div className="grid gap-4 sm:grid-cols-3">
             <Field label="対象月" htmlFor="receipt-note-add-month">
               <select
@@ -3152,12 +3195,34 @@ function ReceiptNotePage({
               />
             </Field>
           </div>
-          <Button type="button" disabled={disabled} onClick={onAddRow}>
-            <ButtonIcon busy={disabled} icon={Plus} />
-            追加
-          </Button>
-        </CardContent>
-      </Card>
+          {/* モーダル表示中は既存トーストが aria-hidden 配下になり読み上げられないため、モーダル内のエラーで通知する */}
+          {formError ? (
+            <p
+              role="alert"
+              className="flex items-center gap-2 text-sm font-bold text-destructive"
+            >
+              <XCircle className="size-4 shrink-0" aria-hidden="true" />
+              {formError}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                void onAddRow().then((saved) => {
+                  if (saved) {
+                    setAddOpen(false);
+                  }
+                })
+              }
+            >
+              <ButtonIcon busy={disabled} icon={Plus} />
+              追加
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Tabs
         value={filter}
