@@ -98,6 +98,10 @@ type ReceiptNoteGroupUser = {
 type ReceiptNoteRow = {
   key: string;
   id?: string;
+  // 行の元の月（"YYYY-MM"）
+  month: string;
+  // 表示月より前から繰り越された行のとき true
+  isCarried?: boolean;
   category: ReceiptNoteCategory;
   user: ReceiptNoteUser;
   amount: number;
@@ -473,6 +477,9 @@ export function KakeiboLiffApp() {
   const [receiptNoteDeletedKeys, setReceiptNoteDeletedKeys] = React.useState<
     Record<string, boolean>
   >({});
+  const [carriedReceiptNotes, setCarriedReceiptNotes] = React.useState<
+    DashboardReceiptNote[]
+  >([]);
   const [savedReceiptNotes, setSavedReceiptNotes] = React.useState<
     DashboardReceiptNote[]
   >([]);
@@ -574,6 +581,7 @@ export function KakeiboLiffApp() {
         setRent(data.rent);
         setRentDraft(data.rent ?? defaultRentDraft());
         setSavedReceiptNotes(data.receiptNotes);
+        setCarriedReceiptNotes(data.carriedReceiptNotes ?? []);
         setCurrentUser(data.currentUser);
 
         if (data.source === "live") {
@@ -798,6 +806,7 @@ export function KakeiboLiffApp() {
       rows.push({
         key: receiptNote.id,
         id: receiptNote.id,
+        month: dashboardMonth,
         category: receiptNote.category,
         user: {
           id: receiptNote.userId,
@@ -842,6 +851,7 @@ export function KakeiboLiffApp() {
         }
         rows.push({
           key,
+          month: dashboardMonth,
           category: category.value,
           user: {
             id: "rent",
@@ -894,6 +904,7 @@ export function KakeiboLiffApp() {
 
         rows.push({
           key,
+          month: dashboardMonth,
           category: category.value,
           user: {
             id: payer.id,
@@ -936,6 +947,7 @@ export function KakeiboLiffApp() {
 
         rows.push({
           key,
+          month: dashboardMonth,
           category: category.value,
           user: {
             id: user.id,
@@ -952,6 +964,78 @@ export function KakeiboLiffApp() {
       }
     }
 
+    // 表示月より前の「その他」で、誰か 1 人でも未確認の行を繰り越して表示する
+    const carriedRows: ReceiptNoteRow[] = [];
+
+    for (const receiptNote of carriedReceiptNotes) {
+      if (!receiptNote.isActive || receiptNote.month >= dashboardMonth) {
+        continue;
+      }
+      const confirmations = mergeRowConfirmations(
+        receiptNote.confirmations ?? {},
+        receiptNoteConfirmOverrides[receiptNote.id],
+        currentUser?.id,
+      );
+      if (
+        visibleDashboardUsers.length > 0 &&
+        visibleDashboardUsers.every((user) => user.id in confirmations)
+      ) {
+        continue;
+      }
+      carriedRows.push({
+        key: receiptNote.id,
+        id: receiptNote.id,
+        month: receiptNote.month,
+        isCarried: true,
+        category: receiptNote.category,
+        user: {
+          id: receiptNote.userId,
+          name: receiptNoteUserNames[receiptNote.id] ?? receiptNote.userName,
+        },
+        amount: receiptNoteAmounts[receiptNote.id] ?? receiptNote.amount,
+        createdAt: receiptNote.createdAt,
+        confirmations,
+        isManual: receiptNote.source === "manual",
+      });
+    }
+
+    // 過去月の家賃代自動行。summary ノート（削除済み含む）がある月は再導出しない
+    if (rent && rent.amount > 0) {
+      const summaryMonths = new Set(
+        carriedReceiptNotes
+          .filter((receiptNote) => receiptNote.source === "summary")
+          .map((receiptNote) => receiptNote.month),
+      );
+      for (
+        let cursor = RECEIPT_NOTE_START_MONTH;
+        cursor < dashboardMonth;
+        cursor = shiftYearMonth(cursor, 1)
+      ) {
+        const key = createReceiptNoteKey(cursor, "other", "家賃代");
+        if (summaryMonths.has(cursor) || receiptNoteDeletedKeys[key]) {
+          continue;
+        }
+        carriedRows.push({
+          key,
+          month: cursor,
+          isCarried: true,
+          category: "other",
+          user: { id: "rent", name: receiptNoteUserNames[key] ?? "家賃代" },
+          amount: receiptNoteAmounts[key] ?? rent.amount,
+          confirmations: mergeRowConfirmations(
+            {},
+            receiptNoteConfirmOverrides[key],
+            currentUser?.id,
+          ),
+          isManual: false,
+        });
+      }
+    }
+
+    // 繰越行は元の月の古い順に、当月分より先に並べる
+    carriedRows.sort((a, b) => a.month.localeCompare(b.month));
+    rows.unshift(...carriedRows);
+
     return receiptNoteCategories.map<ReceiptNoteCategorySummary>((category) => {
       const categoryRows = rows.filter((row) => row.category === category.value);
 
@@ -965,6 +1049,7 @@ export function KakeiboLiffApp() {
     });
   }, [
     budget,
+    carriedReceiptNotes,
     currentUser,
     dashboardMonth,
     expenses,
@@ -1553,7 +1638,12 @@ export function KakeiboLiffApp() {
   }
 
   function applySavedReceiptNote(receiptNote: DashboardReceiptNote) {
-    setSavedReceiptNotes((current) => {
+    // 繰越行（元の月が表示月と異なる）は繰越側の state を更新する
+    const setNotes =
+      receiptNote.month === dashboardMonth
+        ? setSavedReceiptNotes
+        : setCarriedReceiptNotes;
+    setNotes((current) => {
       const exists = current.some((item) => item.id === receiptNote.id);
       if (exists) {
         return current.map((item) =>
@@ -1573,7 +1663,7 @@ export function KakeiboLiffApp() {
     } = {},
   ) {
     const payload = {
-      month: dashboardMonth,
+      month: row.month,
       category: row.category,
       userName: patch.userName ?? row.user.name,
       amount: patch.amount ?? row.amount,
@@ -1792,7 +1882,7 @@ export function KakeiboLiffApp() {
           {
             method: "POST",
             body: JSON.stringify({
-              month: dashboardMonth,
+              month: row.month,
               category: row.category,
               userName: row.user.name,
               amount: row.amount,
@@ -3495,6 +3585,11 @@ function ReceiptNoteRowItem({
           }}
         />
         <span className="min-w-0 flex-1 break-words font-semibold">
+          {row.isCarried ? (
+            <Badge variant="outline" className="mr-1.5 align-middle">
+              {Number(row.month.split("-")[1])}月分
+            </Badge>
+          ) : null}
           {row.user.name}
         </span>
         <span

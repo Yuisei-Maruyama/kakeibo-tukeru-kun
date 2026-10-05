@@ -1,4 +1,4 @@
-import { Firestore, Timestamp } from "@google-cloud/firestore";
+import { Firestore, type QueryDocumentSnapshot, Timestamp } from "@google-cloud/firestore";
 import { google, type calendar_v3 } from "googleapis";
 import { NextRequest, NextResponse } from "next/server";
 import { createFirestoreClient, createGoogleAuth } from "@/lib/google-server";
@@ -46,6 +46,9 @@ type FirestoreSettings = {
   secondHalfPayerId?: string;
 };
 
+// 受領ノートの開始月（クライアントの RECEIPT_NOTE_START_MONTH と同じ値）
+const RECEIPT_NOTE_START_MONTH = "2026-06";
+
 const receiptNoteCategories = new Set<ReceiptNoteCategory>([
   "diningSaving",
   "shoppingSettlement",
@@ -84,6 +87,7 @@ function createUnavailable(message: string): DashboardData {
     subscriptions: [],
     rent: null,
     receiptNotes: [],
+    carriedReceiptNotes: [],
     settings: {
       monthlyBudget: 50000,
       lineGroupId: "",
@@ -425,17 +429,12 @@ async function getRent(groupId: string): Promise<DashboardRent> {
   };
 }
 
-async function getReceiptNotes(
+function mapReceiptNotes(
+  docs: QueryDocumentSnapshot[],
   groupId: string,
-  month: string,
   groupUserIds: string[],
-): Promise<DashboardReceiptNote[]> {
-  const snapshot = await getFirestore()
-    .collection("receiptNotes")
-    .where("month", "==", month)
-    .get();
-
-  return snapshot.docs
+): DashboardReceiptNote[] {
+  return docs
     .map((doc) => ({ id: doc.id, ...doc.data() }) as Record<string, unknown>)
     .filter((receiptNote) => !groupId || receiptNote.groupId === groupId)
     .map((receiptNote) => ({
@@ -453,8 +452,46 @@ async function getReceiptNotes(
           ? "summary" as const
           : "manual" as const,
       isActive: receiptNote.isActive !== false,
-    }))
-    .sort((a, b) => a.category.localeCompare(b.category));
+    }));
+}
+
+async function getReceiptNotes(
+  groupId: string,
+  month: string,
+  groupUserIds: string[],
+): Promise<DashboardReceiptNote[]> {
+  const snapshot = await getFirestore()
+    .collection("receiptNotes")
+    .where("month", "==", month)
+    .get();
+
+  return mapReceiptNotes(snapshot.docs, groupId, groupUserIds).sort((a, b) =>
+    a.category.localeCompare(b.category),
+  );
+}
+
+/**
+ * 対象月より前（開始月以降）の「その他」ノートを取得する。繰り越し表示と
+ * 過去月の家賃代自動行の再導出抑止判定に使うため、論理削除済みも含めて返す。
+ * @param groupId LINE グループ ID
+ * @param month 対象月（"YYYY-MM"）。この月より前のノートを返す
+ * @param groupUserIds 旧データ互換の confirmations 合成に使うグループ全ユーザーの ID
+ * @returns 元の月の古い順に並んだ「その他」ノート
+ */
+async function getCarriedReceiptNotes(
+  groupId: string,
+  month: string,
+  groupUserIds: string[],
+): Promise<DashboardReceiptNote[]> {
+  const snapshot = await getFirestore()
+    .collection("receiptNotes")
+    .where("month", ">=", RECEIPT_NOTE_START_MONTH)
+    .where("month", "<", month)
+    .get();
+
+  return mapReceiptNotes(snapshot.docs, groupId, groupUserIds)
+    .filter((receiptNote) => receiptNote.category === "other")
+    .sort((a, b) => a.month.localeCompare(b.month));
 }
 
 export async function GET(request: NextRequest) {
@@ -478,13 +515,21 @@ export async function GET(request: NextRequest) {
         ? null
         : { id: authorizedUser.id, displayName: authorizedUser.displayName };
 
-    const [expenses, calendarEvents, subscriptions, rent, receiptNotes] =
+    const [
+      expenses,
+      calendarEvents,
+      subscriptions,
+      rent,
+      receiptNotes,
+      carriedReceiptNotes,
+    ] =
       await Promise.all([
         getExpenses(year, month, groupUserIds),
         getCalendarEvents(settings.calendarId, year, month),
         getSubscriptions(groupId),
         getRent(groupId),
         getReceiptNotes(groupId, monthLabel, [...groupUserIds]),
+        getCarriedReceiptNotes(groupId, monthLabel, [...groupUserIds]),
       ]);
 
     const totals = expenses.reduce(
@@ -514,6 +559,7 @@ export async function GET(request: NextRequest) {
       subscriptions,
       rent,
       receiptNotes,
+      carriedReceiptNotes,
       settings,
       totals,
     } satisfies DashboardData, {

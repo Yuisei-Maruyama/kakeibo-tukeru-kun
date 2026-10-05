@@ -90,6 +90,8 @@ export type DashboardData = {
   subscriptions: DashboardSubscription[];
   rent: DashboardRent;
   receiptNotes: DashboardReceiptNote[];
+  // 対象月より前の「その他」ノート（month は元の月）。繰り越し表示に使う
+  carriedReceiptNotes: DashboardReceiptNote[];
   settings: DashboardSettings;
   totals: {
     dining: number;
