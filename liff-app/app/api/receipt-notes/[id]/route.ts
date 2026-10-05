@@ -21,6 +21,7 @@ type RouteContext = {
 type ReceiptNoteRequestBody = {
   category?: string;
   userName?: string;
+  payerId?: string;
   amount?: number;
 };
 
@@ -28,6 +29,7 @@ function parseReceiptNoteBody(body: ReceiptNoteRequestBody, source: string) {
   return {
     category: assertReceiptNoteCategory(body.category),
     userName: body.userName?.trim() || "@自分",
+    payerId: body.payerId,
     // 手動ノートは 1 円以上を必須にする（自動集計行は予算超過のマイナスも許容）
     amount:
       source === "manual"
@@ -57,7 +59,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     // 対象ノートの source を引き継いで金額バリデーションを切り替える
     const source = before.source === "summary" ? "summary" : "manual";
     const body = parseReceiptNoteBody((await request.json()) as ReceiptNoteRequestBody, source);
-    const user = resolveReceiptNoteUser(body, authorizedContext);
+    // 手動のその他行は payerId 省略時も既存の支払い者（userId）を保つ
+    const user = resolveReceiptNoteUser(
+      {
+        ...body,
+        payerId:
+          body.payerId ||
+          (source === "manual" ? String(before.userId ?? "") : undefined),
+      },
+      authorizedContext,
+    );
     const groupUserIds = authorizedContext.users.map((item) => item.id);
     // 金額・カテゴリー・ユーザー名編集は確認状態（confirmations / received）に触れない
     const updates = {

@@ -392,13 +392,23 @@ function normalizeUserName(value: string) {
   return value.replace(/^@/, "").replace(/\s+/g, "").toLowerCase();
 }
 
-// その他カテゴリーは userName を自由入力のタイトルとして扱う
+/**
+ * 受領ノートの対象ユーザーを解決する。その他カテゴリーは userName を自由入力のタイトルとして扱い、
+ * userId は支払い者（payerId、省略時は認証ユーザー）にする。
+ * @param body category・userName と、その他カテゴリーの支払い者 payerId
+ * @param context 認証済みコンテキスト
+ * @returns 保存する userId と表示名
+ */
 export function resolveReceiptNoteUser(
-  body: { category: ReceiptNoteCategory; userName: string },
+  body: { category: ReceiptNoteCategory; userName: string; payerId?: string },
   context: AuthorizedContext,
 ) {
   if (body.category === "other") {
-    return { id: context.user.id, displayName: body.userName };
+    const payerId = body.payerId || context.user.id;
+    if (!context.users.some((user) => user.id === payerId)) {
+      throw new Error("支払い者がグループに見つかりませんでした");
+    }
+    return { id: payerId, displayName: body.userName };
   }
 
   return resolveUserByName(body.userName, context);

@@ -123,6 +123,8 @@ type ReceiptNoteDraft = {
   amount: number | "";
   // 追加先の対象月。空文字は「表示中の月に追従」を意味する
   month: string;
+  // 支払い者の ID。空文字は「自分（認証ユーザー）」を意味する
+  payerId: string;
 };
 type ApiResponse<T> = {
   status: "ok" | "error";
@@ -487,6 +489,7 @@ export function KakeiboLiffApp() {
     userName: "",
     amount: "",
     month: "",
+    payerId: "",
   });
   const [receiptNoteFormError, setReceiptNoteFormError] = React.useState<
     string | null
@@ -1659,6 +1662,7 @@ export function KakeiboLiffApp() {
     row: ReceiptNoteRow,
     patch: Partial<Pick<ReceiptNoteRow, "amount">> & {
       userName?: string;
+      payerId?: string;
       isActive?: boolean;
     } = {},
   ) {
@@ -1666,6 +1670,8 @@ export function KakeiboLiffApp() {
       month: row.month,
       category: row.category,
       userName: patch.userName ?? row.user.name,
+      // 手動のその他行は user.id が支払い者
+      payerId: patch.payerId ?? (row.isManual ? row.user.id : undefined),
       amount: patch.amount ?? row.amount,
       source: row.isManual ? "manual" : "summary",
       isActive: patch.isActive ?? true,
@@ -1724,6 +1730,10 @@ export function KakeiboLiffApp() {
             month: targetMonth,
             category: "other",
             userName,
+            payerId:
+              receiptNoteDraft.payerId ||
+              currentUser?.id ||
+              receiptNoteGroupUsers[0]?.id,
             amount,
             source: "manual",
           }),
@@ -1744,7 +1754,7 @@ export function KakeiboLiffApp() {
     // POST 成功後の副作用の例外を false 扱いにせず、再送信（二重登録）を誘発しないため、ここで実行する
     // 追加した明細は未確認なので未確認タブへ切り替えて可視化する
     setReceiptNoteFilter("unconfirmed");
-    setReceiptNoteDraft({ userName: "", amount: "", month: "" });
+    setReceiptNoteDraft({ userName: "", amount: "", month: "", payerId: "" });
     setReceiptNoteFormError(null);
     setToast(result.message);
     celebrateSave();
@@ -1758,7 +1768,7 @@ export function KakeiboLiffApp() {
   // モーダルからユーザー/タイトル・設定額をまとめて更新する（カテゴリーは変更不可）
   async function updateReceiptNoteRowDetails(
     row: ReceiptNoteRow,
-    patch: { userName: string; amount: number },
+    patch: { userName: string; amount: number; payerId: string },
   ) {
     const userName = patch.userName.trim();
     // その他行はタイトル、それ以外の行はユーザーを必須にする（カテゴリーは変更不可）
@@ -1787,13 +1797,25 @@ export function KakeiboLiffApp() {
     // 変更のあったフィールドだけを差分にまとめ、全一致なら何もしない
     const nextUserName = userName !== row.user.name ? userName : undefined;
     const nextAmount = patch.amount !== row.amount ? patch.amount : undefined;
-    if (nextUserName === undefined && nextAmount === undefined) {
+    const nextPayerId =
+      row.isManual && patch.payerId && patch.payerId !== row.user.id
+        ? patch.payerId
+        : undefined;
+    if (
+      nextUserName === undefined &&
+      nextAmount === undefined &&
+      nextPayerId === undefined
+    ) {
       return true;
     }
 
     const diff: Partial<Pick<ReceiptNoteRow, "amount">> & {
       userName?: string;
+      payerId?: string;
     } = {};
+    if (nextPayerId !== undefined) {
+      diff.payerId = nextPayerId;
+    }
     if (nextUserName !== undefined) {
       diff.userName = nextUserName;
     }
@@ -3098,7 +3120,7 @@ function ReceiptNotePage({
   onConfirmChange: (row: ReceiptNoteRow, confirmed: boolean) => void;
   onUpdateRow: (
     row: ReceiptNoteRow,
-    patch: { userName: string; amount: number },
+    patch: { userName: string; amount: number; payerId: string },
   ) => Promise<boolean>;
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
@@ -3212,7 +3234,7 @@ function ReceiptNotePage({
           }
           setAddOpen(open);
           if (open) {
-            onDraftChange({ userName: "", amount: "", month: "" });
+            onDraftChange({ userName: "", amount: "", month: "", payerId: "" });
           }
         }}
       >
@@ -3283,6 +3305,28 @@ function ReceiptNotePage({
                   }))
                 }
               />
+            </Field>
+            <Field label="支払い者" htmlFor="receipt-note-add-payer">
+              <select
+                id="receipt-note-add-payer"
+                value={
+                  draft.payerId || currentUser?.id || groupUsers[0]?.id || ""
+                }
+                disabled={disabled}
+                onChange={(event) =>
+                  onDraftChange((current) => ({
+                    ...current,
+                    payerId: event.target.value,
+                  }))
+                }
+                className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+              >
+                {groupUsers.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.displayName}
+                  </option>
+                ))}
+              </select>
             </Field>
           </div>
           {/* モーダル表示中は既存トーストが aria-hidden 配下になり読み上げられないため、モーダル内のエラーで通知する */}
@@ -3440,7 +3484,7 @@ function ReceiptNoteCategoryCard({
   onConfirmChange: (row: ReceiptNoteRow, confirmed: boolean) => void;
   onUpdateRow: (
     row: ReceiptNoteRow,
-    patch: { userName: string; amount: number },
+    patch: { userName: string; amount: number; payerId: string },
   ) => Promise<boolean>;
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
@@ -3511,7 +3555,7 @@ function ReceiptNoteRowItem({
   onConfirmChange: (row: ReceiptNoteRow, confirmed: boolean) => void;
   onUpdateRow: (
     row: ReceiptNoteRow,
-    patch: { userName: string; amount: number },
+    patch: { userName: string; amount: number; payerId: string },
   ) => Promise<boolean>;
   onDeleteRow: (row: ReceiptNoteRow) => void;
 }) {
@@ -3520,16 +3564,23 @@ function ReceiptNoteRowItem({
   const [draft, setDraft] = React.useState<{
     userName: string;
     amount: number | "";
-  }>({ userName: row.user.name, amount: row.amount });
+    payerId: string;
+  }>({ userName: row.user.name, amount: row.amount, payerId: row.user.id });
 
   // 行の内容が変わったら編集ドラフトを同期する
   React.useEffect(() => {
     setDraft({
       userName: row.user.name,
       amount: row.amount,
+      payerId: row.user.id,
     });
-  }, [row.user.name, row.amount]);
+  }, [row.user.name, row.user.id, row.amount]);
 
+  // 手動のその他行は user.id が支払い者（メンバーに見つからなければ非表示）
+  const payerName =
+    row.isManual && row.category === "other"
+      ? groupUsers.find((user) => user.id === row.user.id)?.displayName
+      : undefined;
   const selfConfirmed =
     currentUser != null && row.confirmations[currentUser.id] != null;
   const bothConfirmed =
@@ -3609,6 +3660,7 @@ function ReceiptNoteRowItem({
               setDraft({
                 userName: row.user.name,
                 amount: row.amount,
+                payerId: row.user.id,
               });
             }
           }}
@@ -3665,6 +3717,31 @@ function ReceiptNoteRowItem({
                   />
                 </Field>
               )}
+              {row.isManual && row.category === "other" ? (
+                <Field
+                  label="支払い者"
+                  htmlFor={`${summaryValue}-${index}-receipt-payer`}
+                >
+                  <select
+                    id={`${summaryValue}-${index}-receipt-payer`}
+                    value={draft.payerId}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        payerId: event.target.value,
+                      }))
+                    }
+                    className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+                  >
+                    {groupUsers.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.displayName}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ) : null}
               <Field
                 label="設定額"
                 htmlFor={`${summaryValue}-${index}-receipt-amount`}
@@ -3710,6 +3787,7 @@ function ReceiptNoteRowItem({
                   void onUpdateRow(row, {
                     userName: draft.userName,
                     amount: Number(draft.amount),
+                    payerId: draft.payerId,
                   }).then((saved) => {
                     if (saved) {
                       setEditOpen(false);
@@ -3727,6 +3805,11 @@ function ReceiptNoteRowItem({
       {row.createdAt ? (
         <p className="pl-8 text-xs text-muted-foreground">
           記載日: {formatConfirmationDate(row.createdAt)}
+        </p>
+      ) : null}
+      {payerName ? (
+        <p className="pl-8 text-xs text-muted-foreground">
+          支払い者: {payerName}
         </p>
       ) : null}
       {/* 確認状態（グループ各メンバーの確認状況を常時表示） */}

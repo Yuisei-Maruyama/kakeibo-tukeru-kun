@@ -19,6 +19,7 @@ type ReceiptNoteRequestBody = {
   month?: string;
   category?: string;
   userName?: string;
+  payerId?: string;
   amount?: number;
   selfConfirmed?: boolean;
   source?: string;
@@ -32,6 +33,7 @@ function parseReceiptNoteBody(body: ReceiptNoteRequestBody) {
     month: assertYearMonth(body.month),
     category: assertReceiptNoteCategory(body.category),
     userName: body.userName?.trim() || "@自分",
+    payerId: body.payerId,
     // 手動追加は 1 円以上を必須にする（自動集計行は予算超過のマイナスも許容）
     amount:
       source === "manual"
