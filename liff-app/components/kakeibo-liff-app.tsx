@@ -105,6 +105,8 @@ type ReceiptNoteRow = {
   category: ReceiptNoteCategory;
   user: ReceiptNoteUser;
   amount: number;
+  amountLocked?: boolean;
+  received?: boolean;
   createdAt?: string;
   // userId → 確認日（"YYYY-MM-DD"）または旧データ互換の "legacy"
   confirmations: Record<string, string>;
@@ -133,7 +135,7 @@ type ApiResponse<T> = {
 type ExpenseMutationResult = {
   expense: Expense;
   diningBalance?: number;
-  users: DashboardData["users"];
+  users?: DashboardData["users"];
 };
 type ReceiptNoteMutationResult = {
   receiptNote: DashboardReceiptNote;
@@ -354,8 +356,17 @@ function createReceiptNoteKey(
   return `${month}:${category}:${userName}`;
 }
 
-function createReceiptExpenseKey(category: ExpenseCategory, userName: string) {
-  return `${category}:${userName}`;
+function createReceiptExpenseKey(category: ExpenseCategory, userKey: string) {
+  return `${category}:${userKey}`;
+}
+
+/**
+ * 支出の支払者をユーザー ID 優先で識別する。
+ * @param expense 支出データ
+ * @returns 支払者を識別するキー
+ */
+function getExpensePayerKey(expense: Expense) {
+  return expense.payerId || `expense-${expense.payer}`;
 }
 
 // レコードから指定キーを取り除く（存在しなければ元のまま返す）
@@ -435,7 +446,23 @@ export function KakeiboLiffApp() {
     todayInputValue().slice(0, 7),
   );
   const [isLoadingDashboard, setIsLoadingDashboard] = React.useState(false);
+  const dashboardRequestIdRef = React.useRef(0);
   const [isMutating, setIsMutating] = React.useState(false);
+  const mutationLockRef = React.useRef(false);
+
+  function beginMutation(): boolean {
+    if (mutationLockRef.current) {
+      return false;
+    }
+    mutationLockRef.current = true;
+    setIsMutating(true);
+    return true;
+  }
+
+  function endMutation() {
+    mutationLockRef.current = false;
+    setIsMutating(false);
+  }
   const [expenses, setExpenses] = React.useState<Expense[]>(initialExpenses);
   const [dashboardUsers, setDashboardUsers] = React.useState<DashboardData["users"]>([]);
   const [draftExpense, setDraftExpense] = React.useState<DraftExpense>(defaultDraft);
@@ -562,6 +589,7 @@ export function KakeiboLiffApp() {
   }, []);
 
   const loadDashboard = React.useCallback(async () => {
+    const requestId = ++dashboardRequestIdRef.current;
     setIsLoadingDashboard(true);
 
     try {
@@ -574,6 +602,10 @@ export function KakeiboLiffApp() {
           : {},
       });
       const data = (await response.json()) as DashboardData;
+
+      if (requestId !== dashboardRequestIdRef.current) {
+        return;
+      }
 
       React.startTransition(() => {
         setDashboard(data);
@@ -599,6 +631,7 @@ export function KakeiboLiffApp() {
                 date: expense.date,
                 category: expense.category as ExpenseCategory,
                 payer: expense.userName,
+                payerId: expense.userId,
                 amount: expense.amount,
                 storeName: expense.storeName,
                 memo: expense.memo ?? "",
@@ -607,9 +640,13 @@ export function KakeiboLiffApp() {
         }
       });
     } catch (error) {
-      setToast(error instanceof Error ? error.message : "データ取得に失敗しました");
+      if (requestId === dashboardRequestIdRef.current) {
+        setToast(error instanceof Error ? error.message : "データ取得に失敗しました");
+      }
     } finally {
-      setIsLoadingDashboard(false);
+      if (requestId === dashboardRequestIdRef.current) {
+        setIsLoadingDashboard(false);
+      }
     }
   }, [dashboardMonth]);
 
@@ -674,6 +711,24 @@ export function KakeiboLiffApp() {
 
     return results;
   }, [expenseCategoryFilter, expenseDateFilter, expensePayerFilter, expenses]);
+  const possibleDuplicateExpenseIds = React.useMemo(() => {
+    const groups = new Map<string, Expense[]>();
+    for (const expense of expenses) {
+      if (/ランドリー|laundry/i.test(expense.storeName)) {
+        continue;
+      }
+      const key = `${getExpensePayerKey(expense)}|${expense.date}|${expense.category}|${expense.amount}`;
+      const group = groups.get(key) ?? [];
+      group.push(expense);
+      groups.set(key, group);
+    }
+
+    return new Set(
+      [...groups.values()]
+        .filter((group) => group.length >= 2)
+        .flatMap((group) => group.map((expense) => expense.id)),
+    );
+  }, [expenses]);
   const hasLiveDashboardData = dashboard?.source === "live" || dashboardUsers.length > 0;
   const visibleDashboardUsers =
     dashboard?.source === "live" ? dashboard.users : dashboardUsers;
@@ -684,20 +739,31 @@ export function KakeiboLiffApp() {
     () => buildReceiptNoteMonthOptions(dashboardMonth),
     [dashboardMonth],
   );
-  // 外食残高カードは対象月に追従する。当月はライブ残高、過去月はその月の
-  // アクティブな外食貯金ノートを優先し、なければ「予算 − その月の外食費用合計」で算出する
-  const diningBalance = React.useMemo(() => {
-    const isCurrentMonth = dashboardMonth === todayInputValue().slice(0, 7);
-    const diningExpenseByPayer = new Map<string, number>();
+  const diningExpenseByPayer = React.useMemo(() => {
+    const amounts = new Map<string, number>();
     for (const expense of expenses) {
       if (expense.category !== "外食費用") {
         continue;
       }
-      diningExpenseByPayer.set(
-        expense.payer,
-        (diningExpenseByPayer.get(expense.payer) ?? 0) + expense.amount,
-      );
+      const key = getExpensePayerKey(expense);
+      amounts.set(key, (amounts.get(key) ?? 0) + expense.amount);
     }
+    return amounts;
+  }, [expenses]);
+  // 外食貯金の算出額。当月は現在残高（users.diningBalance）、過去月は「予算 − その月の外食支出合計」
+  const computedDiningSavingAmount = React.useCallback((userId: string, userName: string) => {
+    const user = visibleDashboardUsers.find(
+      (item) => item.id === userId || item.displayName === userName,
+    );
+    if (user && dashboardMonth === todayInputValue().slice(0, 7)) {
+      return user.diningBalance;
+    }
+    return budget - (diningExpenseByPayer.get(user?.id ?? userId) ??
+      diningExpenseByPayer.get(`expense-${userName}`) ?? 0);
+  }, [budget, dashboardMonth, diningExpenseByPayer, visibleDashboardUsers]);
+  // 外食残高カードは対象月に追従し、過去月は固定済みノートだけを優先する
+  const diningBalance = React.useMemo(() => {
+    const isCurrentMonth = dashboardMonth === todayInputValue().slice(0, 7);
     const entries = visibleDashboardUsers.map((user) => {
       if (isCurrentMonth) {
         return { id: user.id, displayName: user.displayName, amount: user.diningBalance };
@@ -706,22 +772,23 @@ export function KakeiboLiffApp() {
         (note) =>
           note.category === "diningSaving" &&
           note.isActive &&
+          (note.amountLocked || note.received) &&
           // 受領ノート側の照合（userId または userName 一致）と揃える
           (note.userId === user.id || note.userName === user.displayName),
       );
       return {
         id: user.id,
         displayName: user.displayName,
-        amount: savedNote
-          ? savedNote.amount
-          : budget - (diningExpenseByPayer.get(user.displayName) ?? 0),
+        amount: isCurrentMonth || !savedNote
+          ? computedDiningSavingAmount(user.id, user.displayName)
+          : savedNote.amount,
       };
     });
     const caption = isCurrentMonth
       ? "現在の残高"
       : `${formatYearMonthLabel(dashboardMonth)} 時点の実績`;
     return { entries, caption };
-  }, [budget, dashboardMonth, expenses, savedReceiptNotes, visibleDashboardUsers]);
+  }, [computedDiningSavingAmount, dashboardMonth, savedReceiptNotes, visibleDashboardUsers]);
   // 支払い者フィルターの選択肢: ダッシュボードの表示名を先頭に、履歴の payer で未収録のものを出現順で追加
   const expensePayerOptions = React.useMemo(() => {
     const options: string[] = [];
@@ -745,19 +812,18 @@ export function KakeiboLiffApp() {
     const buildEntries = (category: ExpenseCategory) => {
       const amounts = new Map<string, number>();
       for (const user of visibleDashboardUsers) {
-        amounts.set(user.displayName, 0);
+        amounts.set(user.id, 0);
       }
       for (const expense of expenses) {
         if (expense.category !== category) {
           continue;
         }
-        amounts.set(
-          expense.payer,
-          (amounts.get(expense.payer) ?? 0) + expense.amount,
-        );
+        const key = getExpensePayerKey(expense);
+        amounts.set(key, (amounts.get(key) ?? 0) + expense.amount);
       }
-      return Array.from(amounts, ([displayName, amount]) => ({
-        displayName,
+      return Array.from(amounts, ([id, amount]) => ({
+        displayName: visibleDashboardUsers.find((user) => user.id === id)?.displayName ??
+          expenses.find((expense) => getExpensePayerKey(expense) === id)?.payer ?? id,
         amount,
       }));
     };
@@ -774,7 +840,10 @@ export function KakeiboLiffApp() {
     }
 
     for (const expense of expenses) {
-      addReceiptNoteUser(userMap, `expense-${expense.payer}`, expense.payer);
+      const payerKey = getExpensePayerKey(expense);
+      if (!visibleDashboardUsers.some((user) => user.id === payerKey)) {
+        addReceiptNoteUser(userMap, payerKey, expense.payer);
+      }
     }
 
     if (userMap.size === 0) {
@@ -786,13 +855,17 @@ export function KakeiboLiffApp() {
   }, [expenses, visibleDashboardUsers]);
   const receiptNoteSummaries = React.useMemo(() => {
     const expenseAmountMap = new Map<string, number>();
-    const diningBalanceMap = new Map<string, number>();
     const rows: ReceiptNoteRow[] = [];
     // 外食貯金の自動行抑止に使う「アクティブな保存済みノート」だけのキー
     const activeReceiptNoteKeys = new Set<string>();
     // 自動集計由来（source: summary）の保存済みノートがあるカテゴリー。
     // 精算カテゴリーはこの集合にある月は再導出しない（削除済みノートの復活防止を含む）
     const summaryNoteCategories = new Set<ReceiptNoteCategory>();
+
+    for (const expense of expenses) {
+      const key = createReceiptExpenseKey(expense.category, getExpensePayerKey(expense));
+      expenseAmountMap.set(key, (expenseAmountMap.get(key) ?? 0) + expense.amount);
+    }
 
     for (const receiptNote of savedReceiptNotes) {
       if (receiptNote.source !== "manual") {
@@ -806,37 +879,53 @@ export function KakeiboLiffApp() {
       activeReceiptNoteKeys.add(`${receiptNote.category}:${receiptNote.userId}`);
       activeReceiptNoteKeys.add(`${receiptNote.category}:${receiptNote.userName}`);
 
+      const isSettlement = receiptNote.category === "shoppingSettlement" || receiptNote.category === "travelSettlement";
+      const settlementExpenseCategory = receiptNote.category === "shoppingSettlement" ? "買い物費用" : "旅行費用";
+      const settlementTotals = isSettlement && receiptNoteUsers.length === 2
+        ? receiptNoteUsers.map((user) => expenseAmountMap.get(createReceiptExpenseKey(settlementExpenseCategory, user.id)) ?? 0)
+        : undefined;
+      // 同額（精算不要）のときは返金者を入れ替えず、保存済みのユーザーを保つ（確認が消えないように）
+      const computedRefundUser = !settlementTotals
+        ? undefined
+        : settlementTotals[0] === settlementTotals[1]
+          ? receiptNoteUsers.find((user) => user.id === receiptNote.userId) ?? receiptNoteUsers[1]
+          : settlementTotals[0] < settlementTotals[1]
+            ? receiptNoteUsers[0]
+            : receiptNoteUsers[1];
+      const followsSettlement = Boolean(computedRefundUser && !receiptNote.amountLocked && !receiptNote.received);
+      const noteUser = followsSettlement && computedRefundUser
+        ? { id: computedRefundUser.id, name: receiptNoteUserNames[receiptNote.id] ?? computedRefundUser.name }
+        : { id: receiptNote.userId, name: receiptNoteUserNames[receiptNote.id] ?? receiptNote.userName };
+      const noteConfirmations = followsSettlement && computedRefundUser?.id !== receiptNote.userId
+        ? {}
+        : mergeRowConfirmations(
+            receiptNote.confirmations ?? {},
+            receiptNoteConfirmOverrides[receiptNote.id],
+            currentUser?.id,
+          );
+
+      // 未固定ノートは保存額ではなく現在の算出額に追従させる
+      let noteAmount = receiptNote.amount;
+      if (!receiptNote.amountLocked && !receiptNote.received && receiptNote.category === "diningSaving") {
+        noteAmount = computedDiningSavingAmount(receiptNote.userId, receiptNote.userName);
+      } else if (followsSettlement && settlementTotals) {
+        noteAmount = Math.round(Math.abs(settlementTotals[0] - settlementTotals[1]) / 2);
+      }
+
       rows.push({
         key: receiptNote.id,
         id: receiptNote.id,
         month: dashboardMonth,
         category: receiptNote.category,
-        user: {
-          id: receiptNote.userId,
-          name: receiptNoteUserNames[receiptNote.id] ?? receiptNote.userName,
-        },
-        amount: receiptNoteAmounts[receiptNote.id] ?? receiptNote.amount,
+        user: noteUser,
+        amount: receiptNoteAmounts[receiptNote.id] ?? noteAmount,
+        amountLocked: receiptNote.amountLocked,
+        received: receiptNote.received,
         createdAt: receiptNote.createdAt,
-        confirmations: mergeRowConfirmations(
-          receiptNote.confirmations ?? {},
-          receiptNoteConfirmOverrides[receiptNote.id],
-          currentUser?.id,
-        ),
+        confirmations: noteConfirmations,
         isManual: receiptNote.source === "manual",
       });
     }
-
-    for (const expense of expenses) {
-      const key = createReceiptExpenseKey(expense.category, expense.payer);
-      expenseAmountMap.set(key, (expenseAmountMap.get(key) ?? 0) + expense.amount);
-    }
-
-    for (const user of visibleDashboardUsers) {
-      diningBalanceMap.set(user.displayName, user.diningBalance);
-    }
-
-    // 外食貯金の残高（users.diningBalance）は「現在」の値のため過去月では使わない
-    const isCurrentMonth = dashboardMonth === todayInputValue().slice(0, 7);
 
     for (const category of receiptNoteCategories) {
       // その他カテゴリーは家賃の自動行だけを導出する（明細追加の手動行は保存済みノート側で表現される）
@@ -886,15 +975,16 @@ export function KakeiboLiffApp() {
         const [firstUser, secondUser] = receiptNoteUsers;
         const firstTotal =
           expenseAmountMap.get(
-            createReceiptExpenseKey(category.expenseCategory, firstUser.name),
+            createReceiptExpenseKey(category.expenseCategory, firstUser.id),
           ) ?? 0;
         const secondTotal =
           expenseAmountMap.get(
-            createReceiptExpenseKey(category.expenseCategory, secondUser.name),
+            createReceiptExpenseKey(category.expenseCategory, secondUser.id),
           ) ?? 0;
         const refundAmount = Math.round(Math.abs(firstTotal - secondTotal) / 2);
 
-        // 支払額が同額なら精算不要（@集計の「精算の必要はありません」と同じ）
+        // 支払額が同額なら精算不要（@集計の「精算の必要はありません」と同じ）。
+        // 「精算不要」表示は保存済みノートが 0 円になった場合だけ
         if (refundAmount === 0) {
           continue;
         }
@@ -936,16 +1026,7 @@ export function KakeiboLiffApp() {
           continue;
         }
 
-        const categoryExpenseKey = createReceiptExpenseKey(
-          category.expenseCategory,
-          user.name,
-        );
-        // 当月は現在残高を、過去月は「予算 − その月の外食支出合計」を初期額にする（負値も通す）
-        const fallbackDiningSaving =
-          budget - (expenseAmountMap.get(categoryExpenseKey) ?? 0);
-        const defaultAmount = isCurrentMonth
-          ? diningBalanceMap.get(user.name) ?? fallbackDiningSaving
-          : fallbackDiningSaving;
+        const defaultAmount = computedDiningSavingAmount(user.id, user.name);
         const userName = receiptNoteUserNames[key] ?? user.name;
 
         rows.push({
@@ -1051,8 +1132,8 @@ export function KakeiboLiffApp() {
       };
     });
   }, [
-    budget,
     carriedReceiptNotes,
+    computedDiningSavingAmount,
     currentUser,
     dashboardMonth,
     expenses,
@@ -1163,6 +1244,10 @@ export function KakeiboLiffApp() {
       return;
     }
 
+    // 解析中の連打や他の登録操作との同時実行を防ぐ
+    if (!beginMutation()) {
+      return;
+    }
     setIsAnalyzingImage(true);
 
     try {
@@ -1191,7 +1276,9 @@ export function KakeiboLiffApp() {
 
       React.startTransition(() => {
         setExpenses((current) => [result.expense!, ...current]);
-        setDashboardUsers(result.users ?? dashboardUsers);
+        if (result.users) {
+          setDashboardUsers(result.users);
+        }
         setDashboard(null);
         setReceiptFile(null);
         setReceiptImageUrl(null);
@@ -1202,6 +1289,7 @@ export function KakeiboLiffApp() {
       showError(error instanceof Error ? error.message : "画像登録に失敗しました");
     } finally {
       setIsAnalyzingImage(false);
+      endMutation();
     }
   }
 
@@ -1232,7 +1320,9 @@ export function KakeiboLiffApp() {
       return;
     }
 
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<ExpenseMutationResult>(
@@ -1250,7 +1340,9 @@ export function KakeiboLiffApp() {
         setExpenses((current) =>
           [result.expense, ...current].sort((a, b) => b.date.localeCompare(a.date)),
         );
-        setDashboardUsers(result.users);
+        if (result.users) {
+          setDashboardUsers(result.users);
+        }
         setDashboard(null);
         setDraftExpense(defaultDraft());
         setExpenseFormError(null);
@@ -1264,12 +1356,14 @@ export function KakeiboLiffApp() {
       showError(message);
       setExpenseFormError(message);
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
   async function deleteExpense(expense: Expense) {
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<ExpenseMutationResult>(
@@ -1281,14 +1375,16 @@ export function KakeiboLiffApp() {
 
       React.startTransition(() => {
         setExpenses((current) => current.filter((item) => item.id !== expense.id));
-        setDashboardUsers(result.users);
+        if (result.users) {
+          setDashboardUsers(result.users);
+        }
         setDashboard(null);
         setToast(result.message);
       });
     } catch (error) {
       showError(error instanceof Error ? error.message : "支出の削除に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
@@ -1309,7 +1405,9 @@ export function KakeiboLiffApp() {
       return;
     }
 
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<ExpenseMutationResult>(
@@ -1329,7 +1427,9 @@ export function KakeiboLiffApp() {
             .map((item) => (item.id === before.id ? result.expense : item))
             .sort((a, b) => b.date.localeCompare(a.date)),
         );
-        setDashboardUsers(result.users);
+        if (result.users) {
+          setDashboardUsers(result.users);
+        }
         setDashboard(null);
         setToast(result.message);
         celebrateSave();
@@ -1337,7 +1437,7 @@ export function KakeiboLiffApp() {
     } catch (error) {
       showError(error instanceof Error ? error.message : "支出の更新に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
@@ -1347,7 +1447,9 @@ export function KakeiboLiffApp() {
       return;
     }
 
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<{ event: AppCalendarEvent }>(
@@ -1374,12 +1476,14 @@ export function KakeiboLiffApp() {
     } catch (error) {
       showError(error instanceof Error ? error.message : "予定の保存に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
   async function updateSchedule(before: AppCalendarEvent, after: AppCalendarEvent) {
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<{ event: AppCalendarEvent }>(
@@ -1402,12 +1506,14 @@ export function KakeiboLiffApp() {
     } catch (error) {
       showError(error instanceof Error ? error.message : "予定の更新に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
   async function deleteSchedule(event: AppCalendarEvent) {
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<Record<string, never>>(
@@ -1424,7 +1530,7 @@ export function KakeiboLiffApp() {
     } catch (error) {
       showError(error instanceof Error ? error.message : "予定の削除に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
@@ -1449,7 +1555,9 @@ export function KakeiboLiffApp() {
       return;
     }
 
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<{ subscription: AppSubscription }>(
@@ -1476,7 +1584,7 @@ export function KakeiboLiffApp() {
     } catch (error) {
       showError(error instanceof Error ? error.message : "サブスクの保存に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
@@ -1500,7 +1608,9 @@ export function KakeiboLiffApp() {
       return;
     }
 
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<{ subscription: AppSubscription }>(
@@ -1528,12 +1638,14 @@ export function KakeiboLiffApp() {
     } catch (error) {
       showError(error instanceof Error ? error.message : "サブスクの更新に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
   async function deleteSubscription(subscription: AppSubscription) {
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<{ subscription: AppSubscription }>(
@@ -1552,12 +1664,14 @@ export function KakeiboLiffApp() {
     } catch (error) {
       showError(error instanceof Error ? error.message : "サブスクの削除に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
   async function updateRent() {
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<{ rent: DraftRent }>("/api/rent", {
@@ -1577,12 +1691,14 @@ export function KakeiboLiffApp() {
     } catch (error) {
       showError(error instanceof Error ? error.message : "家賃の保存に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
   async function clearRent() {
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<Record<string, never>>("/api/rent", {
@@ -1597,12 +1713,14 @@ export function KakeiboLiffApp() {
     } catch (error) {
       showError(error instanceof Error ? error.message : "家賃の削除に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
   async function updateBudget() {
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return;
+    }
 
     try {
       const result = await requestJson<{
@@ -1636,7 +1754,7 @@ export function KakeiboLiffApp() {
     } catch (error) {
       showError(error instanceof Error ? error.message : "予算変更に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
@@ -1673,6 +1791,9 @@ export function KakeiboLiffApp() {
       // 手動のその他行は user.id が支払い者
       payerId: patch.payerId ?? (row.isManual ? row.user.id : undefined),
       amount: patch.amount ?? row.amount,
+      lockAmount: patch.amount !== undefined || patch.userName !== undefined || patch.payerId !== undefined,
+      // 外食貯金の対象ユーザー変更時に、変更先の既存ノートを上書きしないための元ユーザー
+      originalUserId: row.category === "diningSaving" ? row.user.id : undefined,
       source: row.isManual ? "manual" : "summary",
       isActive: patch.isActive ?? true,
     };
@@ -1718,7 +1839,9 @@ export function KakeiboLiffApp() {
     // 空文字は「表示中の月に追従」を意味するので、未選択なら表示中の月に追加する
     const targetMonth = receiptNoteDraft.month || dashboardMonth;
 
-    setIsMutating(true);
+    if (!beginMutation()) {
+      return false;
+    }
 
     let result: ApiResponse<ReceiptNoteMutationResult>;
     try {
@@ -1748,7 +1871,7 @@ export function KakeiboLiffApp() {
       setReceiptNoteFormError(message);
       return false;
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
 
     // POST 成功後の副作用の例外を false 扱いにせず、再送信（二重登録）を誘発しないため、ここで実行する
@@ -1823,6 +1946,10 @@ export function KakeiboLiffApp() {
       diff.amount = nextAmount;
     }
 
+    if (!beginMutation()) {
+      return false;
+    }
+
     // 楽観更新: 変更フィールドの override を更新（巻き戻し用に変更前値を保持）
     const previousUserName = receiptNoteUserNames[row.key];
     const previousAmount = receiptNoteAmounts[row.key];
@@ -1838,8 +1965,6 @@ export function KakeiboLiffApp() {
         [row.key]: nextAmount,
       }));
     }
-    setIsMutating(true);
-
     try {
       await saveReceiptNoteRow(row, diff);
       // 自動集計行は保存後に保存済みノートが表現するため、元スロットを抑止して override を破棄する
@@ -1864,7 +1989,7 @@ export function KakeiboLiffApp() {
       showError(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
       return false;
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
@@ -1874,21 +1999,33 @@ export function KakeiboLiffApp() {
       return;
     }
 
+    if (!beginMutation()) {
+      return;
+    }
+
     const previousOverride = receiptNoteConfirmOverrides[row.key];
     // 楽観更新: true なら今日の日付、false なら確認解除（null）
     setReceiptNoteConfirmOverrides((current) => ({
       ...current,
       [row.key]: confirmed ? todayInputValue() : null,
     }));
-    setIsMutating(true);
-
     try {
       if (row.id) {
+        const savedNote = savedReceiptNotes.find((note) => note.id === row.id);
+        // 未固定ノートの確認時は、表示中の算出額と対象ユーザーを確定値として送る
+        const sendsSnapshot =
+          confirmed &&
+          row.category !== "other" &&
+          savedNote?.amountLocked !== true &&
+          savedNote?.received !== true;
         const result = await requestJson<ReceiptNoteMutationResult>(
           `/api/receipt-notes/${encodeURIComponent(row.id)}/confirmation`,
           {
             method: "PUT",
-            body: JSON.stringify({ confirmed }),
+            body: JSON.stringify({
+              confirmed,
+              ...(sendsSnapshot ? { snapshot: { amount: row.amount, userId: row.user.id } } : {}),
+            }),
           },
         );
         applySavedReceiptNote(result.receiptNote);
@@ -1926,7 +2063,7 @@ export function KakeiboLiffApp() {
       );
       showError(error instanceof Error ? error.message : "受領ノートの更新に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
@@ -1938,13 +2075,15 @@ export function KakeiboLiffApp() {
   }
 
   async function deleteReceiptNoteRow(row: ReceiptNoteRow) {
+    if (!beginMutation()) {
+      return;
+    }
+
     const previousDeleted = receiptNoteDeletedKeys[row.key];
     setReceiptNoteDeletedKeys((current) => ({
       ...current,
       [row.key]: true,
     }));
-    setIsMutating(true);
-
     try {
       if (row.id) {
         const result = await requestJson<ReceiptNoteMutationResult>(
@@ -1966,7 +2105,7 @@ export function KakeiboLiffApp() {
       );
       showError(error instanceof Error ? error.message : "受領ノートの削除に失敗しました");
     } finally {
-      setIsMutating(false);
+      endMutation();
     }
   }
 
@@ -2514,6 +2653,7 @@ export function KakeiboLiffApp() {
                             <ExpenseRow
                               key={expense.id}
                               expense={expense}
+                              isPossibleDuplicate={possibleDuplicateExpenseIds.has(expense.id)}
                               disabled={isMutating}
                               onDelete={(item) => void deleteExpense(item)}
                               onUpdate={(before, after) => void updateExpense(before, after)}
@@ -3598,7 +3738,7 @@ function ReceiptNoteRowItem({
   // 精算行の返金先（2 人グループの相手側）。手動追加行には表示しない
   const settlementRefundTo =
     isSettlement && !row.isManual && groupUsers.length === 2
-      ? groupUsers.find((user) => user.displayName !== row.user.name)
+      ? groupUsers.find((user) => user.id !== row.user.id)
       : undefined;
   // 確認モーダルの本文はカテゴリー別に文面を変える
   const confirmMessage = isDiningSaving
@@ -3607,6 +3747,8 @@ function ReceiptNoteRowItem({
       : row.amount < 0
         ? `予算超過分 ${formatCurrency(Math.abs(row.amount))} を ${row.user.name} が負担することを確認しましたか？`
         : "外食貯金が 0 円であることを確認しましたか？"
+    : settlementRefundTo && row.amount === 0
+      ? "精算不要です"
     : settlementRefundTo
       ? `${row.user.name} から ${settlementRefundTo.displayName} に ${formatCurrency(row.amount)} 返金しましたか？`
       : `${row.user.name}（${formatCurrency(row.amount)}）を確認済みにしますか？`;
@@ -3649,7 +3791,7 @@ function ReceiptNoteRowItem({
             isDiningSaving && row.amount < 0 ? "text-destructive" : undefined,
           )}
         >
-          {formatCurrency(row.amount)}
+          {isSettlement && row.amount === 0 ? "精算不要" : formatCurrency(row.amount)}
         </span>
         <Dialog
           open={editOpen}
@@ -4525,11 +4667,13 @@ function SubscriptionRow({
 
 function ExpenseRow({
   expense,
+  isPossibleDuplicate,
   disabled,
   onDelete,
   onUpdate,
 }: {
   expense: Expense;
+  isPossibleDuplicate: boolean;
   disabled: boolean;
   onDelete: (expense: Expense) => void;
   onUpdate: (before: Expense, after: Expense) => void;
@@ -4547,6 +4691,11 @@ function ExpenseRow({
           <Badge variant={expense.category === "外食費用" ? "default" : "secondary"}>
             {expense.category}
           </Badge>
+          {isPossibleDuplicate ? (
+            <Badge variant="outline" className="border-destructive text-destructive">
+              重複の可能性あり
+            </Badge>
+          ) : null}
           <span className="text-sm text-muted-foreground">
             {formatShortDate(expense.date)}
           </span>

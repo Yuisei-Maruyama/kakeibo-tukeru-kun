@@ -60,6 +60,7 @@ export type DashboardReceiptNote = {
   userId: string;
   userName: string;
   amount: number;
+  amountLocked: boolean;
   // ノート記載日。未実体化の自動行には無い
   createdAt?: string;
   // 互換ミラー: グループ全員が confirmations に存在すれば true

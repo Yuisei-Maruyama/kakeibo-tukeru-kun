@@ -1,5 +1,6 @@
 import { Firestore, Timestamp } from '@google-cloud/firestore';
 import { User, Expense, Settings, Category, ConversationSession, Subscription, Rent } from '../types/index.js';
+import { isCurrentMonthJST } from '../utils/date.js';
 
 /**
  * Firestoreクライアント
@@ -16,6 +17,45 @@ function getFirestore(): Firestore {
   return firestore;
 }
 
+/**
+ * Webhookイベントを一度だけ処理できるように記録する
+ * @param id LINE WebhookイベントID
+ * @param data 保存するイベント情報
+ * @returns 新規なら'process'、未完了のまま一定時間経過した未通知イベントなら'notify'、それ以外は'skip'
+ */
+export async function claimWebhookEvent(
+  id: string,
+  data: { type: string; isRedelivery: boolean; createdAt: Timestamp }
+): Promise<'process' | 'skip' | 'notify'> {
+  const db = getFirestore();
+  const ref = db.collection('processedWebhookEvents').doc(id);
+  return db.runTransaction(async transaction => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) {
+      const expireAt = Timestamp.fromMillis(data.createdAt.toMillis() + 7 * 24 * 60 * 60 * 1000);
+      transaction.create(ref, { ...data, status: 'processing', expireAt });
+      return 'process';
+    }
+    const event = snapshot.data()!;
+    if (event.status !== 'processing' || event.notifiedAt) {
+      return 'skip';
+    }
+    if (Timestamp.now().toMillis() - (event.createdAt as Timestamp).toMillis() < 6 * 60 * 1000) {
+      return 'skip';
+    }
+    transaction.update(ref, { notifiedAt: Timestamp.now() });
+    return 'notify';
+  });
+}
+
+/**
+ * Webhookイベントを処理完了として記録する。
+ * @param id LINE WebhookイベントID
+ */
+export async function markWebhookEventDone(id: string): Promise<void> {
+  await getFirestore().collection('processedWebhookEvents').doc(id).update({ status: 'done' });
+}
+
 // =============================================================================
 // ユーザー操作
 // =============================================================================
@@ -30,27 +70,28 @@ export async function getOrCreateUser(
 ): Promise<User> {
   const db = getFirestore();
   const userRef = db.collection('users').doc(userId);
-  const userDoc = await userRef.get();
-
-  if (userDoc.exists) {
-    return userDoc.data() as User;
-  }
-
-  // 新規ユーザー作成
-  const newUser: User = {
-    id: userId,
-    displayName,
-    groupId,
-    isActive: true,
-    diningBalance: 50000,
-    balanceResetAt: Timestamp.now(),
-    createdAt: Timestamp.now(),
-    updatedAt: Timestamp.now(),
-  };
-
-  await userRef.set(newUser);
+  const result = await db.runTransaction(async transaction => {
+    const userDoc = await transaction.get(userRef);
+    if (userDoc.exists) {
+      return userDoc.data() as User;
+    }
+    const settingsDoc = await transaction.get(db.collection('settings').doc('global'));
+    const settings = settingsDoc.exists ? settingsDoc.data() as Settings : undefined;
+    const newUser: User = {
+      id: userId,
+      displayName,
+      groupId,
+      isActive: true,
+      diningBalance: settings?.monthlyBudget ?? 50000,
+      balanceResetAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    };
+    transaction.create(userRef, newUser);
+    return newUser;
+  });
   console.log(`New user created: ${userId} (${displayName})`);
-  return newUser;
+  return result;
 }
 
 /**
@@ -266,7 +307,9 @@ export async function recalculateAllDiningBalances(
 // =============================================================================
 
 /**
- * 支出を保存
+ * 支出を作成し、当月の外食残高を同時に調整する。
+ * @param expense 保存する支出
+ * @returns 作成または既存支出の ID
  */
 export async function saveExpense(expense: Omit<Expense, 'id' | 'createdAt'>): Promise<string> {
   const db = getFirestore();
@@ -278,9 +321,41 @@ export async function saveExpense(expense: Omit<Expense, 'id' | 'createdAt'>): P
     createdAt: Timestamp.now(),
   };
 
-  await expenseRef.set(newExpense);
-  console.log(`Expense saved: ${expenseRef.id}`);
-  return expenseRef.id;
+  return db.runTransaction(async transaction => {
+    const existing = expense.calendarEventId
+      ? await transaction.get(db.collection('expenses').where('calendarEventId', '==', expense.calendarEventId).limit(1))
+      : undefined;
+    const applies = expense.category === '外食費用' && isCurrentMonthJST(expense.date.toDate().toISOString().slice(0, 10));
+    const userRef = applies ? db.collection('users').doc(expense.userId) : undefined;
+    const userDoc = userRef ? await transaction.get(userRef) : undefined;
+    if (existing && !existing.empty) {
+      return existing.docs[0].id;
+    }
+    transaction.create(expenseRef, newExpense);
+    if (userRef && userDoc?.exists) {
+      transaction.update(userRef, { diningBalance: Number(userDoc.data()?.diningBalance ?? 0) - expense.amount, updatedAt: Timestamp.now() });
+    }
+    return expenseRef.id;
+  });
+}
+
+/**
+ * 登録・削除メッセージに表示する外食残高を取得する（当月の外食費用のときだけ）。
+ * 残高調整は保存・削除のトランザクション内で済んでいるため、ここでは最新値を読むだけ。
+ * @param userId 対象ユーザー ID
+ * @param category 支出カテゴリー
+ * @param dateStr 支出日（YYYY-MM-DD）
+ * @returns 表示する外食残高。対象外なら undefined
+ */
+export async function getDiningBalanceForDisplay(
+  userId: string,
+  category: Category,
+  dateStr: string
+): Promise<number | undefined> {
+  if (category !== '外食費用' || !isCurrentMonthJST(dateStr)) {
+    return undefined;
+  }
+  return (await getUser(userId))?.diningBalance;
 }
 
 /**
@@ -373,11 +448,26 @@ export async function getExpensesByDateRange(
 }
 
 /**
- * IDで支出を削除
+ * IDで支出を削除し、当月の外食残高を同時に戻す。
+ * @param expenseId 削除する支出 ID
  */
 export async function deleteExpenseById(expenseId: string): Promise<void> {
   const db = getFirestore();
-  await db.collection('expenses').doc(expenseId).delete();
+  const expenseRef = db.collection('expenses').doc(expenseId);
+  await db.runTransaction(async transaction => {
+    const expenseDoc = await transaction.get(expenseRef);
+    if (!expenseDoc.exists) {
+      return;
+    }
+    const expense = expenseDoc.data() as Expense;
+    const applies = expense.category === '外食費用' && isCurrentMonthJST(expense.date.toDate().toISOString().slice(0, 10));
+    const userRef = applies ? db.collection('users').doc(expense.userId) : undefined;
+    const userDoc = userRef ? await transaction.get(userRef) : undefined;
+    transaction.delete(expenseRef);
+    if (userRef && userDoc?.exists) {
+      transaction.update(userRef, { diningBalance: Number(userDoc.data()?.diningBalance ?? 0) + expense.amount, updatedAt: Timestamp.now() });
+    }
+  });
   console.log(`Deleted expense: ${expenseId}`);
 }
 
@@ -400,15 +490,11 @@ export async function deleteExpensesByDate(
     .where('date', '<=', Timestamp.fromDate(endOfDay))
     .get();
 
-  const deletedExpenses: Expense[] = [];
-  const batch = db.batch();
-
   for (const doc of snapshot.docs) {
-    deletedExpenses.push(doc.data() as Expense);
-    batch.delete(doc.ref);
+    await deleteExpenseById(doc.id);
   }
 
-  await batch.commit();
+  const deletedExpenses = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense));
   console.log(`Deleted ${deletedExpenses.length} expenses for ${userId} on ${date.toISOString()}`);
   return deletedExpenses;
 }
@@ -450,7 +536,7 @@ export async function deleteExpenseByDateAndAmount(
   // 最初にマッチしたものを削除
   const doc = matchingDocs[0];
   const expense = doc.data() as Expense;
-  await doc.ref.delete();
+  await deleteExpenseById(doc.id);
 
   console.log(`Deleted expense: ${expense.id} (${userId}, ${date.toISOString()}, ${amount}, ${category})`);
   return expense;
@@ -632,14 +718,41 @@ export async function getExpenseByCalendarEventId(
 }
 
 /**
- * 支出を更新
+ * 支出を更新し、当月の外食残高を同時に調整する。
+ * @param expenseId 更新対象の支出 ID
+ * @param updates 更新内容
  */
 export async function updateExpense(
   expenseId: string,
   updates: Partial<Omit<Expense, 'id'>>
 ): Promise<void> {
   const db = getFirestore();
-  await db.collection('expenses').doc(expenseId).update(updates);
+  const expenseRef = db.collection('expenses').doc(expenseId);
+  await db.runTransaction(async transaction => {
+    const expenseDoc = await transaction.get(expenseRef);
+    if (!expenseDoc.exists) {
+      throw new Error('対象の支出が見つかりませんでした');
+    }
+    const before = expenseDoc.data() as Expense;
+    const after = { ...before, ...updates } as Expense;
+    const deltas = new Map<string, number>();
+    if (before.category === '外食費用' && isCurrentMonthJST(before.date.toDate().toISOString().slice(0, 10))) {
+      deltas.set(before.userId, (deltas.get(before.userId) ?? 0) + before.amount);
+    }
+    if (after.category === '外食費用' && isCurrentMonthJST(after.date.toDate().toISOString().slice(0, 10))) {
+      deltas.set(after.userId, (deltas.get(after.userId) ?? 0) - after.amount);
+    }
+    const users = await Promise.all([...deltas.keys()].map(async userId => {
+      const ref = db.collection('users').doc(userId);
+      return { ref, snapshot: await transaction.get(ref), delta: deltas.get(userId)! };
+    }));
+    transaction.update(expenseRef, updates);
+    for (const { ref, snapshot, delta } of users) {
+      if (snapshot.exists) {
+        transaction.update(ref, { diningBalance: Number(snapshot.data()?.diningBalance ?? 0) + delta, updatedAt: Timestamp.now() });
+      }
+    }
+  });
   console.log(`Expense updated: ${expenseId}`);
 }
 

@@ -1,4 +1,4 @@
-import { Firestore, Timestamp } from "@google-cloud/firestore";
+import { Firestore, Timestamp, type DocumentReference } from "@google-cloud/firestore";
 import { google, type calendar_v3 } from "googleapis";
 import { NextRequest } from "next/server";
 import { createFirestoreClient, createGoogleAuth } from "@/lib/google-server";
@@ -51,6 +51,7 @@ export type LiffExpensePayload = {
   date: string;
   category: ExpenseCategory;
   payer: string;
+  payerId: string;
   amount: number;
   storeName: string;
   memo?: string;
@@ -914,6 +915,7 @@ export function mapExpenseForClient(expense: StoredExpense): LiffExpensePayload 
     date: formatTimestampDate(expense.date),
     category: expense.category,
     payer: expense.userName,
+    payerId: expense.userId,
     amount: Number(expense.amount ?? 0),
     storeName: expense.storeName,
     memo: expense.memo ?? "",
@@ -1006,6 +1008,7 @@ export function mapReceiptNoteForClient(
     userId: String(receiptNote.userId ?? ""),
     userName: String(receiptNote.userName ?? ""),
     amount: Number(receiptNote.amount ?? 0),
+    amountLocked: receiptNote.amountLocked !== false,
     createdAt: timestampToJstDateString(receiptNote.createdAt),
     received: Boolean(receiptNote.received),
     confirmations: normalizeReceiptNoteConfirmations(receiptNote, groupUserIds),
@@ -1014,74 +1017,95 @@ export function mapReceiptNoteForClient(
   };
 }
 
-export async function adjustDiningBalance(userId: string, delta: number) {
+/**
+ * 支出 doc の作成と当月外食費用の残高調整を単一トランザクションで実行する。
+ * @param expenseRef 作成する支出 doc の参照
+ * @param expense 保存する支出
+ * @returns 当月外食費用なら新残高、それ以外は undefined
+ */
+export async function createExpenseWithBalance(
+  expenseRef: DocumentReference,
+  expense: StoredExpense,
+) {
   const db = getFirestore();
-  const userRef = db.collection("users").doc(userId);
+  const applies = expense.category === "外食費用" && isCurrentJSTMonth(formatTimestampDate(expense.date));
 
   return db.runTransaction(async (transaction) => {
-    const userDoc = await transaction.get(userRef);
-    if (!userDoc.exists) {
-      return null;
+    const userRef = applies ? db.collection("users").doc(expense.userId) : undefined;
+    const userDoc = userRef ? await transaction.get(userRef) : undefined;
+    transaction.set(expenseRef, expense);
+    if (!userRef || !userDoc?.exists) {
+      return undefined;
     }
-
-    const newBalance = Number(userDoc.data()?.diningBalance ?? 0) + delta;
-    transaction.update(userRef, {
-      diningBalance: newBalance,
-      updatedAt: Timestamp.now(),
-    });
-
+    const newBalance = Number(userDoc.data()?.diningBalance ?? 0) - expense.amount;
+    transaction.update(userRef, { diningBalance: newBalance, updatedAt: Timestamp.now() });
     return newBalance;
   });
 }
 
-export async function applyDiningBalanceForCreate(expense: StoredExpense) {
-  if (expense.category !== "外食費用" || !isCurrentJSTMonth(formatTimestampDate(expense.date))) {
-    return undefined;
-  }
+/**
+ * 支出 doc の削除と当月外食費用の残高調整を単一トランザクションで実行する。
+ * @param expenseId 削除する支出 doc ID
+ * @returns 当月外食費用なら新残高、それ以外は undefined
+ */
+export async function deleteExpenseWithBalance(expenseId: string) {
+  const db = getFirestore();
+  const expenseRef = db.collection("expenses").doc(expenseId);
 
-  return (await adjustDiningBalance(expense.userId, -expense.amount)) ?? undefined;
-}
-
-export async function applyDiningBalanceForDelete(expense: StoredExpense) {
-  if (expense.category !== "外食費用" || !isCurrentJSTMonth(formatTimestampDate(expense.date))) {
-    return undefined;
-  }
-
-  return (await adjustDiningBalance(expense.userId, expense.amount)) ?? undefined;
+  return db.runTransaction(async (transaction) => {
+    const expenseDoc = await transaction.get(expenseRef);
+    // 別端末から同時に削除済みなら、残高を二重に戻さず成功として扱う
+    if (!expenseDoc.exists) {
+      return undefined;
+    }
+    // 同時更新があっても、トランザクション内で読んだ最新の支出を基準に残高を戻す
+    const current = expenseDoc.data() as StoredExpense;
+    const applies =
+      current.category === "外食費用" && isCurrentJSTMonth(formatTimestampDate(current.date));
+    const userRef = applies ? db.collection("users").doc(current.userId) : undefined;
+    const userDoc = userRef ? await transaction.get(userRef) : undefined;
+    transaction.delete(expenseRef);
+    if (!userRef || !userDoc?.exists) {
+      return undefined;
+    }
+    const newBalance = Number(userDoc.data()?.diningBalance ?? 0) + Number(current.amount ?? 0);
+    transaction.update(userRef, { diningBalance: newBalance, updatedAt: Timestamp.now() });
+    return newBalance;
+  });
 }
 
 /**
  * 支出 doc の更新と外食費用の残高調整を単一トランザクションで実行する。
  * doc 書き込みと残高調整を別トランザクションに分けると途中失敗・再送で残高がずれるため、
  * 関係ユーザーの残高デルタを read-before-write でまとめて適用する。
+ * 更新前の値はトランザクション内で読み直した doc を正とする。
  * @param expenseId 更新対象の支出 doc ID
- * @param before 更新前の支出
  * @param after 更新後の支出
  * @returns after が当月の外食費用なら after.userId の新残高、そうでなければ undefined
  */
 export async function updateExpenseWithBalance(
   expenseId: string,
-  before: StoredExpense,
   after: StoredExpense,
 ) {
   const db = getFirestore();
   const expenseRef = db.collection("expenses").doc(expenseId);
-
-  const beforeApplies =
-    before.category === "外食費用" && isCurrentJSTMonth(formatTimestampDate(before.date));
   const afterApplies =
     after.category === "外食費用" && isCurrentJSTMonth(formatTimestampDate(after.date));
 
-  // 同一ユーザーの調整は合算して 1 回の update にまとめる
-  const deltas = new Map<string, number>();
-  if (beforeApplies) {
-    deltas.set(before.userId, (deltas.get(before.userId) ?? 0) + before.amount);
-  }
-  if (afterApplies) {
-    deltas.set(after.userId, (deltas.get(after.userId) ?? 0) - after.amount);
-  }
-
   return db.runTransaction(async (transaction) => {
+    const expenseDoc = await transaction.get(expenseRef);
+    if (!expenseDoc.exists) {
+      throw new Error("対象の支出が見つかりませんでした");
+    }
+    const current = expenseDoc.data() as StoredExpense;
+    // 同一ユーザーの調整は合算して 1 回の update にまとめる
+    const deltas = new Map<string, number>();
+    if (current.category === "外食費用" && isCurrentJSTMonth(formatTimestampDate(current.date))) {
+      deltas.set(current.userId, current.amount);
+    }
+    if (afterApplies) {
+      deltas.set(after.userId, (deltas.get(after.userId) ?? 0) - after.amount);
+    }
     // Firestore は read-before-write のため、update より先に全ユーザー doc を読む
     const userDocs = await Promise.all(
       [...deltas.keys()].map(async (userId) => {

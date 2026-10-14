@@ -1,14 +1,14 @@
 import { Timestamp } from '@google-cloud/firestore';
 import { ConversationSession, ConversationStep, Category } from '../types/index.js';
-import { parseDateString, getJSTDate, isCurrentMonthJST, formatDateYYYYMMDD } from '../utils/date.js';
+import { parseDateString, getJSTDate, formatDateYYYYMMDD } from '../utils/date.js';
 import {
   saveConversationSession,
   updateConversationSession,
   deleteConversationSession,
   getOrCreateUser,
   saveExpense,
-  adjustDiningBalance,
   deleteExpenseByDateAndAmount,
+  getDiningBalanceForDisplay,
   getAllUsers,
   updateSettings,
   getUserByDisplayName,
@@ -528,19 +528,13 @@ async function handleAddExpenseConversation(
       throw error;
     }
 
-    // 外食費用かつ現在の月の場合のみ残高を更新
-    let newBalance: number | undefined;
-    if (category === '外食費用' && isCurrentMonthJST(dateStr)) {
-      newBalance = await adjustDiningBalance(payerUser.id, -amount) ?? undefined;
-    }
-
     const message = createRegistrationMessage(
       category,
       amount,
       payerName,
       '手動入力',
       dateStr,
-      newBalance
+      await getDiningBalanceForDisplay(payerUser.id, category, dateStr)
     );
     await replyMessage(replyToken, message, accessToken);
 
@@ -861,19 +855,13 @@ async function handleDeleteExpenseConversation(
       }
     }
 
-    // 外食費用かつ現在の月の場合のみ残高を戻す
-    let newBalance: number | undefined;
-    if (deletedExpense.category === '外食費用' && isCurrentMonthJST(dateStr)) {
-      newBalance = await adjustDiningBalance(targetUser.id, deleteAmount) ?? undefined;
-    }
-
     const message = createDeleteMessage(
       dateStr,
       deletedExpense.category,
       deleteAmount,
       deleteUserName,
       deletedExpense.storeName,
-      newBalance
+      await getDiningBalanceForDisplay(targetUser.id, deletedExpense.category, dateStr)
     );
     await replyMessage(replyToken, message, accessToken);
 

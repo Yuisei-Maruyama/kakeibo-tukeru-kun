@@ -1,10 +1,10 @@
 import { Timestamp } from "@google-cloud/firestore";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  applyDiningBalanceForCreate,
   assertDateString,
   assertPositiveAmount,
   createExpenseCalendarEvent,
+  createExpenseWithBalance,
   dateStringToTimestamp,
   deleteCalendarEvent,
   getAuthorizedContext,
@@ -81,14 +81,15 @@ export async function POST(request: NextRequest) {
       createdAt: Timestamp.now(),
     };
 
+    let diningBalance: number | undefined;
     try {
-      await expenseRef.set(expense);
+      // transaction の失敗時も作成済み Calendar イベントを残さない
+      diningBalance = await createExpenseWithBalance(expenseRef, expense);
     } catch (error) {
       await deleteCalendarEvent(calendarId, calendarEventId).catch(() => undefined);
       throw error;
     }
-    const diningBalance = await applyDiningBalanceForCreate(expense);
-    const users = await getDashboardUsers(context.groupId);
+    const users = await getDashboardUsers(context.groupId).catch(() => undefined);
 
     return NextResponse.json({
       status: "ok",

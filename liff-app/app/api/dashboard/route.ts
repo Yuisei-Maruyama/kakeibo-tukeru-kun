@@ -444,6 +444,7 @@ function mapReceiptNotes(
       userId: String(receiptNote.userId ?? ""),
       userName: String(receiptNote.userName ?? ""),
       amount: Number(receiptNote.amount ?? 0),
+      amountLocked: receiptNote.amountLocked !== false,
       createdAt: timestampToJstDateString(receiptNote.createdAt),
       received: Boolean(receiptNote.received),
       confirmations: normalizeReceiptNoteConfirmations(receiptNote, groupUserIds),

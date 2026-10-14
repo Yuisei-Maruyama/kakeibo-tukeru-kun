@@ -6,12 +6,12 @@ import { Category, ConversationSession, ReportType } from '../types/index.js';
 
 // Services
 import { analyzeReceiptImage } from '../services/gemini.js';
-import { getOrCreateUser, saveExpense, adjustDiningBalance, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession, getUserByDisplayNamePartial, recalculateAllDiningBalances } from '../services/firestore.js';
+import { getOrCreateUser, saveExpense, getAllUsers, getSettings, updateSettings, deleteExpenseByDateAndAmount, getRecentExpenses, initializeLineGroupId, getConversationSession, deleteConversationSession, getUserByDisplayNamePartial, recalculateAllDiningBalances, getDiningBalanceForDisplay, claimWebhookEvent, markWebhookEventDone } from '../services/firestore.js';
 import { createCalendarEvent, deleteCalendarEvent, createScheduleEvent, getScheduleColorForUser } from '../services/calendar.js';
-import { getImageContent, replyMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, createQuickHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
+import { getImageContent, replyMessage, pushMessage, createRegistrationMessage, createErrorMessage, createBalanceMessage, createBudgetUpdateMessage, createHistoryMessage, createDeleteMessage, createHelpMessage, createQuickHelpMessage, getUserDisplayName, createReportMessage } from '../services/line.js';
 import { startAddExpenseConversation, startAddExpenseConversationWithPartialData, startAddScheduleConversation, startDeleteExpenseConversation, startDeleteExpenseConversationWithPartialData, startDeleteExpenseConversationAtDateStep, startInitialSetupConversation, startChangeSettingsConversation, handleConversationInput, startAddSubscriptionConversation, showSubscriptionList, startDeleteSubscriptionConversation, startEditSubscriptionConversation, startAddRentConversation, startEditRentConversation, startAddTravelConversation, startAddTravelConversationWithPartialData } from './conversation.js';
 import { generateReportData, getReportPeriod } from './scheduler.js';
-import { parseDateString, parseYearMonthString, getJSTDate, isCurrentMonthJST } from '../utils/date.js';
+import { parseDateString, parseYearMonthString, getJSTDate } from '../utils/date.js';
 import { resolvePayerName } from '../utils/payer.js';
 
 /**
@@ -136,6 +136,38 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     // イベント処理
     for (const event of events) {
       if (event.type === 'message') {
+        const webhookEventId = event.webhookEventId;
+        if (webhookEventId) {
+          const claim = await claimWebhookEvent(webhookEventId, {
+            type: event.type,
+            isRedelivery: event.deliveryContext?.isRedelivery ?? false,
+            createdAt: Timestamp.now(),
+          });
+          if (claim === 'notify') {
+            try {
+              const settings = await getSettings();
+              const groupId = event.source.type === 'group' ? event.source.groupId : settings?.lineGroupId;
+              if (groupId) {
+                await pushMessage(groupId, '前回の処理が完了しなかった可能性があります。もう一度送ってください', accessToken);
+              }
+            } catch (error) {
+              console.error(`Failed to notify incomplete webhook event: ${webhookEventId}`, error);
+            }
+            continue;
+          }
+          if (claim === 'skip') {
+            console.log(`Skipping duplicate webhook event: ${webhookEventId}`);
+            continue;
+          }
+          await handleMessageEvent(event as MessageEvent, accessToken, geminiApiKey, calendarId);
+          // 完了記録の失敗で 500 を返すと再送が「未完了」通知になり二重登録を招くため、ログのみにする
+          await markWebhookEventDone(webhookEventId).catch((error) => {
+            console.error(`Failed to mark webhook event done: ${webhookEventId}`, error);
+          });
+          continue;
+        }
+
+        // 外に出る例外は保存後の返信失敗がほとんどのため、記録は消さず再送で再処理しない
         await handleMessageEvent(event as MessageEvent, accessToken, geminiApiKey, calendarId);
       }
     }
@@ -250,16 +282,6 @@ async function handleImageMessage(
       calendarEventId,
     });
 
-    // 外食費用の場合は残高を更新（現在の月の支出のみ）
-    let newBalance: number | undefined;
-    if (analysisResult.category === '外食費用') {
-      if (isCurrentMonthJST(analysisResult.date)) {
-        // 現在の月の支出のみ残高を更新
-        newBalance = await adjustDiningBalance(userId, -analysisResult.amount) ?? undefined;
-      }
-      // 過去の月の支出は残高に影響を与えない（集計には含まれる）
-    }
-
     // 返信メッセージを送信
     const responseMessage = createRegistrationMessage(
       analysisResult.category,
@@ -267,7 +289,7 @@ async function handleImageMessage(
       user.displayName,
       analysisResult.storeName,
       analysisResult.date,
-      newBalance
+      await getDiningBalanceForDisplay(userId, analysisResult.category, analysisResult.date)
     );
 
     await replyMessage(replyToken, responseMessage, accessToken);
@@ -795,22 +817,14 @@ async function handleDeleteCommand(
       }
     }
 
-    // 外食費用の場合は支払い者の残高を戻す（現在の月の支出のみ）
     const expenseDateStr = targetDate.toISOString().split('T')[0];
-    let newBalance: number | undefined;
-    if (deletedExpense.category === '外食費用') {
-      if (isCurrentMonthJST(expenseDateStr)) {
-        newBalance = await adjustDiningBalance(targetUser.id, deletedExpense.amount) ?? undefined;
-      }
-    }
-
     const message = createDeleteMessage(
       expenseDateStr,
       deletedExpense.category,
       deletedExpense.amount,
       deletedExpense.userName,
       deletedExpense.storeName,
-      newBalance
+      await getDiningBalanceForDisplay(targetUser.id, deletedExpense.category, expenseDateStr)
     );
 
     await replyMessage(replyToken, message, accessToken);
@@ -922,15 +936,6 @@ async function handleAddCommand(
       throw error;
     }
 
-    // 外食費用の場合は支払い者の残高を更新（現在の月の支出のみ）
-    let newBalance: number | undefined;
-    if (category === '外食費用') {
-      if (isCurrentMonthJST(dateStr)) {
-        newBalance = await adjustDiningBalance(payerUserId, -amount) ?? undefined;
-      }
-      // 過去の月の支出は残高に影響を与えない（集計には含まれる）
-    }
-
     // 返信メッセージを送信
     const responseMessage = createRegistrationMessage(
       category,
@@ -938,7 +943,7 @@ async function handleAddCommand(
       payerName,
       details.content,
       dateStr,
-      newBalance,
+      await getDiningBalanceForDisplay(payerUserId, category, dateStr),
       details.memo
     );
 

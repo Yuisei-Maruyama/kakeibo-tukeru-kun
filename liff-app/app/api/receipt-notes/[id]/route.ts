@@ -23,6 +23,7 @@ type ReceiptNoteRequestBody = {
   userName?: string;
   payerId?: string;
   amount?: number;
+  lockAmount?: boolean;
 };
 
 function parseReceiptNoteBody(body: ReceiptNoteRequestBody, source: string) {
@@ -35,6 +36,7 @@ function parseReceiptNoteBody(body: ReceiptNoteRequestBody, source: string) {
       source === "manual"
         ? assertPositiveAmount(body.amount)
         : assertIntegerAmount(body.amount),
+    lockAmount: body.lockAmount,
   };
 }
 
@@ -45,6 +47,29 @@ async function getReceiptNote(id: string) {
   }
 
   return { id: doc.id, ...doc.data() } as Record<string, unknown>;
+}
+
+/**
+ * 外食貯金ノートの対象ユーザーを変更する前に、変更先ユーザーの有効なノートが同じ月に無いことを確認する。
+ * @param before 変更前の受領ノート
+ * @param user 変更先ユーザー
+ * @param id 変更対象の受領ノート ID
+ */
+async function ensureNoActiveDiningSavingNote(
+  before: Record<string, unknown>,
+  user: { id: string; displayName: string },
+  id: string,
+) {
+  const snapshot = await getFirestore()
+    .collection("receiptNotes")
+    .where("groupId", "==", before.groupId)
+    .where("month", "==", before.month)
+    .where("category", "==", "diningSaving")
+    .where("userId", "==", user.id)
+    .get();
+  if (snapshot.docs.some((doc) => doc.id !== id && doc.data().isActive !== false)) {
+    throw new Error(`${user.displayName} の外食貯金は既にあります`);
+  }
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
@@ -69,13 +94,24 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       },
       authorizedContext,
     );
+    // 外食貯金の対象ユーザー変更は、変更先ユーザーに有効なノートが無いときだけ許可する
+    if (before.category === "diningSaving" && user.id !== before.userId) {
+      await ensureNoActiveDiningSavingNote(before, user, id);
+    }
     const groupUserIds = authorizedContext.users.map((item) => item.id);
-    // 金額・カテゴリー・ユーザー名編集は確認状態（confirmations / received）に触れない
+    // 外食貯金・精算で対象ユーザーが変わる場合は、別の人への精算になるため既存の確認を消す。
+    // それ以外の編集は確認状態（confirmations / received）に触れない
+    const clearsConfirmations = before.category !== "other" && user.id !== before.userId;
     const updates = {
       category: body.category,
       userId: user.id,
       userName: user.displayName,
       amount: body.amount,
+      // 未固定ノートの保存額は古い算出値のことがあるため、金額の差ではなく明示指定とユーザー変更で固定する
+      ...(body.lockAmount === true || user.id !== before.userId
+        ? { amountLocked: true }
+        : {}),
+      ...(clearsConfirmations ? { confirmations: {}, received: false } : {}),
       updatedAt: Timestamp.now(),
     };
 

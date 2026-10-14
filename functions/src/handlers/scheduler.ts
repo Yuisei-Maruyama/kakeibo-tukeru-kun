@@ -1,10 +1,10 @@
 import { Request, Response } from '@google-cloud/functions-framework';
 import { Timestamp } from '@google-cloud/firestore';
-import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, getExpenseByCalendarEventId, getUserIdByDisplayName, saveExpense, adjustDiningBalance, getAllActiveSubscriptions, getRent, updateExpense, findExpenseWithoutCalendarEventId, getExpensesByDateRange, deleteExpenseById, findExpenseByDetails } from '../services/firestore.js';
+import { getAllUsers, getExpensesSummary, getSettings, resetAllDiningBalances, getExpenseByCalendarEventId, getUserIdByDisplayName, getUser, saveExpense, getAllActiveSubscriptions, getRent, updateExpense, findExpenseWithoutCalendarEventId, getExpensesByDateRange, deleteExpenseById, findExpenseByDetails } from '../services/firestore.js';
 import { pushMessage, createReportMessage } from '../services/line.js';
 import { getTodaySchedules, getMonthlyExpenseEventsForSync, createCalendarEvent, getCalendarEvent, parseExpenseEventTitle, ParsedExpenseEvent } from '../services/calendar.js';
 import { ReportData, ReportType, UserExpenses, MonthlySummary, Category, Expense } from '../types/index.js';
-import { formatDateYYYYMMDD, getJSTYear, getJSTMonth, getJSTDate, getJSTInfo, getStoredExpenseMonthRange, isCurrentMonthJST } from '../utils/date.js';
+import { formatDateYYYYMMDD, getJSTYear, getJSTMonth, getJSTDate, getJSTInfo, getStoredExpenseMonthRange } from '../utils/date.js';
 
 /**
  * 定期レポートハンドラー
@@ -44,18 +44,34 @@ export async function handleScheduledReport(req: Request, res: Response): Promis
     // レポートメッセージを生成
     const message = createReportMessage(reportData);
 
-    // LINEグループにプッシュ通知
-    await pushMessage(settings.lineGroupId, message, accessToken);
-
-    // 月末レポートの場合は月次リセットを実行
+    // 月末レポートの場合は通知の成否に関係なく先に月次リセットを実行
+    // リセット失敗時もレポートは送り、最後にエラーを返してスケジューラーの再実行に委ねる
+    let resetError: unknown;
     if (reportType === 'end-month') {
-      await resetAllDiningBalances(settings.monthlyBudget);
-      console.log('Monthly balance reset completed');
+      try {
+        await resetAllDiningBalances(settings.monthlyBudget);
+        console.log('Monthly balance reset completed');
+      } catch (error) {
+        resetError = error;
+        console.error('Monthly balance reset failed:', error);
+      }
+    }
+
+    let reportSent = true;
+    try {
+      await pushMessage(settings.lineGroupId, message, accessToken);
+    } catch (error) {
+      reportSent = false;
+      console.error('Failed to send scheduled report:', error);
+    }
+
+    if (resetError) {
+      throw resetError;
     }
 
     res.status(200).json({
       status: 'ok',
-      reportSent: true,
+      reportSent,
       period: {
         start: formatDate(period.start),
         end: formatDate(period.end),
@@ -502,9 +518,11 @@ async function syncExistingExpense(
 ): Promise<'updated' | 'skipped' | 'error'> {
   const existingDate = getStoredExpenseDateString(existingExpense);
   const shouldUpdateStoreName = event.storeName !== undefined;
+  const userId = await getUserIdByDisplayName(event.userName);
+  const userName = userId ? (await getUser(userId))?.displayName ?? event.userName : event.userName;
   const hasChanges =
     existingExpense.amount !== event.amount ||
-    existingExpense.userName !== event.userName ||
+    (userId ? existingExpense.userId !== userId || existingExpense.userName !== userName : existingExpense.userName !== event.userName) ||
     existingExpense.category !== event.category ||
     (shouldUpdateStoreName && existingExpense.storeName !== event.storeName) ||
     existingDate !== event.date;
@@ -514,25 +532,14 @@ async function syncExistingExpense(
     return 'skipped';
   }
 
-  const userId = await getUserIdByDisplayName(event.userName);
   if (!userId) {
     console.warn(`User not found for update: ${event.userName}`);
     return 'error';
   }
 
-  if (existingExpense.category === '外食費用' && isCurrentMonthJST(existingDate)) {
-    const restoredBalance = await adjustDiningBalance(existingExpense.userId, existingExpense.amount);
-    console.log(`Restored dining balance for ${existingExpense.userName}: +${existingExpense.amount} -> ${restoredBalance}`);
-  }
-
-  if (event.category === '外食費用' && isCurrentMonthJST(event.date)) {
-    const newBalance = await adjustDiningBalance(userId, -event.amount);
-    console.log(`Updated dining balance for ${event.userName}: -${event.amount} -> ${newBalance}`);
-  }
-
   await updateExpense(existingExpense.id!, {
     userId,
-    userName: event.userName,
+    userName,
     amount: event.amount,
     category: event.category,
     // イベントに店舗情報がない場合は既存のstoreNameを保持
@@ -581,6 +588,7 @@ async function syncCalendarExpensesForMonth(
         errorCount++;
         continue;
       }
+      const userName = (await getUser(userId))?.displayName ?? event.userName;
 
       const manualExpense = await findExpenseWithoutCalendarEventId(
         userId,
@@ -600,18 +608,13 @@ async function syncCalendarExpensesForMonth(
 
       await saveExpense({
         userId,
-        userName: event.userName,
+        userName,
         amount: event.amount,
         category: event.category,
         storeName: event.storeName ?? '手動追加',
         date: Timestamp.fromDate(new Date(event.date)),
         calendarEventId: event.eventId,
       });
-
-      if (event.category === '外食費用' && isCurrentMonthJST(event.date)) {
-        const newBalance = await adjustDiningBalance(userId, -event.amount);
-        console.log(`Updated dining balance for ${event.userName}: ${newBalance}`);
-      }
 
       console.log(`Synced event: ${event.eventId} - ${event.userName} ¥${event.amount}`);
       syncedCount++;
@@ -650,12 +653,6 @@ async function syncCalendarExpensesForMonth(
         }
 
         console.log(`Deleting expense (calendar event removed): ${expense.calendarEventId} - ${expense.userName} ¥${expense.amount}`);
-
-        const expenseDateStr = getStoredExpenseDateString(expense);
-        if (expense.category === '外食費用' && isCurrentMonthJST(expenseDateStr)) {
-          const restoredBalance = await adjustDiningBalance(expense.userId, expense.amount);
-          console.log(`Restored dining balance for ${expense.userName}: +${expense.amount} -> ${restoredBalance}`);
-        }
 
         await deleteExpenseById(expense.id!);
         deletedCount++;

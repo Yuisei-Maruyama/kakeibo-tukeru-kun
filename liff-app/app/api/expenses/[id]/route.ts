@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  applyDiningBalanceForDelete,
   assertDateString,
   assertPositiveAmount,
   createExpenseCalendarEvent,
   dateStringToTimestamp,
   deleteCalendarEvent,
+  deleteExpenseWithBalance,
   ensureGroupExpenseAccess,
   getAuthorizedContext,
   getCalendarId,
@@ -101,8 +101,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       calendarEventId,
     };
 
-    const diningBalance = await updateExpenseWithBalance(id, before, after);
-    const users = await getDashboardUsers(authorizedContext.groupId);
+    const diningBalance = await updateExpenseWithBalance(id, after);
+    const users = await getDashboardUsers(authorizedContext.groupId).catch(() => undefined);
 
     return NextResponse.json({
       status: "ok",
@@ -135,9 +135,8 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       await deleteCalendarEvent(getCalendarId(authorizedContext.settings), expense.calendarEventId);
     }
 
-    await getFirestore().collection("expenses").doc(id).delete();
-    const diningBalance = await applyDiningBalanceForDelete(expense);
-    const users = await getDashboardUsers(authorizedContext.groupId);
+    const diningBalance = await deleteExpenseWithBalance(id);
+    const users = await getDashboardUsers(authorizedContext.groupId).catch(() => undefined);
 
     return NextResponse.json({
       status: "ok",

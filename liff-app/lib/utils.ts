@@ -8,6 +8,7 @@ export type Expense = {
   date: string;
   category: ExpenseCategory;
   payer: string;
+  payerId?: string;
   amount: number;
   storeName: string;
   memo?: string;

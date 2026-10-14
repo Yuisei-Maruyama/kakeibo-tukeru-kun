@@ -111,7 +111,7 @@ deploy_webhook() {
         --trigger-http \
         --allow-unauthenticated \
         --memory=512MB \
-        --timeout=60s \
+        --timeout=300s \
         --max-instances=10 \
         --min-instances=0 \
         --set-env-vars=TZ=Asia/Tokyo \

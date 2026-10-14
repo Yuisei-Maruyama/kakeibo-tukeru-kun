@@ -6,6 +6,7 @@ import { createFirestoreClient, createGoogleAuth } from "@/lib/google-server";
 import {
   assertDateString,
   assertPositiveAmount,
+  createExpenseWithBalance,
   deleteCalendarEvent,
   isExpenseCategory,
 } from "@/lib/liff-server";
@@ -89,10 +90,6 @@ function getCurrentJSTDateLabel() {
   const day = parts.find((part) => part.type === "day")?.value;
 
   return `${year}-${month}-${day}`;
-}
-
-function isCurrentJSTMonth(date: string) {
-  return date.slice(0, 7) === getCurrentJSTDateLabel().slice(0, 7);
 }
 
 function getColorId(category: AnalysisResult["category"]) {
@@ -324,35 +321,12 @@ async function saveExpense(
   };
 
   try {
-    await expenseRef.set(expense);
+    const diningBalance = await createExpenseWithBalance(expenseRef, expense);
+    return { expense, diningBalance };
   } catch (error) {
     await deleteCalendarEvent(calendarId, calendarEventId).catch(() => undefined);
     throw error;
   }
-
-  let diningBalance: number | undefined;
-  if (result.category === "外食費用" && isCurrentJSTMonth(result.date)) {
-    const userRef = db.collection("users").doc(user.id);
-    diningBalance = await db.runTransaction(async (transaction) => {
-      const userDoc = await transaction.get(userRef);
-      if (!userDoc.exists) {
-        return undefined;
-      }
-
-      const currentBalance = Number(userDoc.data()?.diningBalance ?? 0);
-      const nextBalance = currentBalance - result.amount;
-      transaction.update(userRef, {
-        diningBalance: nextBalance,
-        updatedAt: Timestamp.now(),
-      });
-      return nextBalance;
-    });
-  }
-
-  return {
-    expense,
-    diningBalance,
-  };
 }
 
 export async function POST(request: NextRequest) {
@@ -370,7 +344,9 @@ export async function POST(request: NextRequest) {
     const calendarId = getCalendarId(settings);
     const calendarEventId = await createCalendarEvent(calendarId, user, result);
     const { expense, diningBalance } = await saveExpense(user, result, calendarId, calendarEventId);
-    const users = await getDashboardUsers(user.groupId || settings.lineGroupId || "");
+    const users = await getDashboardUsers(user.groupId || settings.lineGroupId || "").catch(
+      () => undefined,
+    );
 
     return NextResponse.json({
       status: "ok",
@@ -382,6 +358,7 @@ export async function POST(request: NextRequest) {
         date: result.date,
         category: result.category,
         payer: user.displayName,
+        payerId: user.id,
         amount: result.amount,
         storeName: result.storeName,
       },
