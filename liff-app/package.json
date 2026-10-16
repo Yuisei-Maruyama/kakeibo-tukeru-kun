@@ -13,7 +13,7 @@
   "dependencies": {
     "@google-cloud/firestore": "latest",
     "@google/genai": "^2.10.0",
-    "@line/liff": "latest",
+    "@line/liff": "2.31.2",
     "@radix-ui/react-dialog": "latest",
     "@radix-ui/react-label": "latest",
     "@radix-ui/react-slot": "latest",
@@ -22,7 +22,7 @@
     "clsx": "latest",
     "googleapis": "latest",
     "lucide-react": "latest",
-    "next": "latest",
+    "next": "16.4.1",
     "react": "latest",
     "react-dom": "latest",
     "tailwind-merge": "latest"
