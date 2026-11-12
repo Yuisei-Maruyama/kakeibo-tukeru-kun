@@ -491,6 +491,7 @@ export function KakeiboLiffApp() {
   const [expenseCategoryFilter, setExpenseCategoryFilter] =
     React.useState<ExpenseCategoryFilter>("all");
   const [expensePayerFilter, setExpensePayerFilter] = React.useState("");
+  const [expenseSortOrder, setExpenseSortOrder] = React.useState<"date" | "amount">("date");
   const [receiptNoteFilter, setReceiptNoteFilter] =
     React.useState<ReceiptNoteFilter>("unconfirmed");
   const [receiptNoteAmounts, setReceiptNoteAmounts] = React.useState<
@@ -704,8 +705,13 @@ export function KakeiboLiffApp() {
       results.push(expense);
     }
 
+    if (expenseSortOrder === "amount") {
+      // 金額の高い順。同額は日付の新しい順
+      results.sort((a, b) => b.amount - a.amount || b.date.localeCompare(a.date));
+    }
+
     return results;
-  }, [expenseCategoryFilter, expensePayerFilter, expenses]);
+  }, [expenseCategoryFilter, expensePayerFilter, expenseSortOrder, expenses]);
   const possibleDuplicateExpenseIds = React.useMemo(() => {
     const groups = new Map<string, Expense[]>();
     for (const expense of expenses) {
@@ -2590,7 +2596,7 @@ export function KakeiboLiffApp() {
                         value={expenseCategoryFilter}
                         className="mt-0 grid gap-4"
                       >
-                        <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+                        <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end">
                           <Field label="月で絞り込み" htmlFor="expense-month-filter">
                             <select
                               id="expense-month-filter"
@@ -2625,12 +2631,28 @@ export function KakeiboLiffApp() {
                               ))}
                             </select>
                           </Field>
+                          <Field label="並び順" htmlFor="expense-sort-order">
+                            <select
+                              id="expense-sort-order"
+                              value={expenseSortOrder}
+                              onChange={(event) =>
+                                setExpenseSortOrder(event.target.value as "date" | "amount")
+                              }
+                              className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+                            >
+                              <option value="date">日付の新しい順</option>
+                              <option value="amount">金額の高い順</option>
+                            </select>
+                          </Field>
                           <Button
                             type="button"
                             variant="outline"
                             className="sm:h-12"
-                            disabled={!expensePayerFilter}
-                            onClick={() => setExpensePayerFilter("")}
+                            disabled={!expensePayerFilter && expenseSortOrder === "date"}
+                            onClick={() => {
+                              setExpensePayerFilter("");
+                              setExpenseSortOrder("date");
+                            }}
                           >
                             <XCircle aria-hidden="true" />
                             解除
