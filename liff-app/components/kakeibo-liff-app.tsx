@@ -490,7 +490,6 @@ export function KakeiboLiffApp() {
   const [reportMode, setReportMode] = React.useState<ReportMode>("history");
   const [expenseCategoryFilter, setExpenseCategoryFilter] =
     React.useState<ExpenseCategoryFilter>("all");
-  const [expenseDateFilter, setExpenseDateFilter] = React.useState("");
   const [expensePayerFilter, setExpensePayerFilter] = React.useState("");
   const [receiptNoteFilter, setReceiptNoteFilter] =
     React.useState<ReceiptNoteFilter>("unconfirmed");
@@ -698,10 +697,6 @@ export function KakeiboLiffApp() {
         continue;
       }
 
-      if (expenseDateFilter && expense.date !== expenseDateFilter) {
-        continue;
-      }
-
       if (expensePayerFilter && expense.payer !== expensePayerFilter) {
         continue;
       }
@@ -710,7 +705,7 @@ export function KakeiboLiffApp() {
     }
 
     return results;
-  }, [expenseCategoryFilter, expenseDateFilter, expensePayerFilter, expenses]);
+  }, [expenseCategoryFilter, expensePayerFilter, expenses]);
   const possibleDuplicateExpenseIds = React.useMemo(() => {
     const groups = new Map<string, Expense[]>();
     for (const expense of expenses) {
@@ -2596,15 +2591,22 @@ export function KakeiboLiffApp() {
                         className="mt-0 grid gap-4"
                       >
                         <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-                          <Field label="日付で絞り込み" htmlFor="expense-date-filter">
-                            <Input
-                              id="expense-date-filter"
-                              type="date"
-                              value={expenseDateFilter}
+                          <Field label="月で絞り込み" htmlFor="expense-month-filter">
+                            <select
+                              id="expense-month-filter"
+                              value={dashboardMonth}
+                              disabled={isLoadingDashboard}
                               onChange={(event) =>
-                                setExpenseDateFilter(event.target.value)
+                                changeDashboardMonth(event.target.value)
                               }
-                            />
+                              className="chalk-select h-12 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base shadow-sm md:text-sm"
+                            >
+                              {homeMonthOptions.map((option) => (
+                                <option key={option} value={option}>
+                                  {formatYearMonthLabel(option)}
+                                </option>
+                              ))}
+                            </select>
                           </Field>
                           <Field label="支払い者で絞り込み" htmlFor="expense-payer-filter">
                             <select
@@ -2627,11 +2629,8 @@ export function KakeiboLiffApp() {
                             type="button"
                             variant="outline"
                             className="sm:h-12"
-                            disabled={!expenseDateFilter && !expensePayerFilter}
-                            onClick={() => {
-                              setExpenseDateFilter("");
-                              setExpensePayerFilter("");
-                            }}
+                            disabled={!expensePayerFilter}
+                            onClick={() => setExpensePayerFilter("")}
                           >
                             <XCircle aria-hidden="true" />
                             解除
